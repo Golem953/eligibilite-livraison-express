@@ -4,7 +4,7 @@ Contexte du projet **eligibilite-livraison-express** : prédiction de l'éligibi
 
 ## Stack
 
-Python 3.14, pandas, scikit-learn, joblib, MLflow, FastAPI/uvicorn. Tests avec pytest, lint avec ruff. Docker + docker-compose, CI/CD GitHub Actions (`.github/workflows/pipeline_ci_cd.yml`).
+Python 3.14, pandas, scikit-learn, joblib, MLflow, FastAPI/uvicorn. Tests avec pytest, lint avec ruff. Docker + docker-compose, CI/CD GitHub Actions prévue plus tard (dossier `.github/workflows/` vide pour l'instant : un fichier `.yml` vide y fait échouer Actions).
 Le notebook d'exploration (`../project_test_v1_final_final2.ipynb`) génère des commandes synthétiques et écrit ses prédictions batch dans un CSV.
 
 ## Architecture (hexagonale)
