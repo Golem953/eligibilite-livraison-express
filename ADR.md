@@ -48,13 +48,13 @@ Ce que le stockage doit permettre :
 ### Conséquences
 
 - **Choix du moteur par configuration** : l'URL de connexion (par exemple `DATABASE_URL`) détermine le moteur. Le choix de l'adapter se fait uniquement dans la composition root (`dependency_injection`).
-- **Code agnostique du moteur** : aucune fonctionnalité spécifique à un SGBD (`JSONB`, syntaxes d'upsert propres à un moteur, fonctions de date spécifiques). L'argument « `JSONB` » de PostgreSQL est donc abandonné. Il faut une couche d'abstraction SQL et un outil de migrations compatibles avec plusieurs moteurs (piste : SQLAlchemy + Alembic, à valider).
+- **Code agnostique du moteur** : aucune fonctionnalité spécifique à un SGBD (`JSONB`, syntaxes d'upsert propres à un moteur, fonctions de date spécifiques). L'argument « `JSONB` » de PostgreSQL est donc abandonné. Accès SQL par **pilotes natifs** (`sqlite3`, `psycopg`) derrière une interface `DatabaseConnectorInterface` (une implémentation par moteur, choisie dans la composition root). Les requêtes utilisent une convention unique de paramètres nommés `:nom`, que chaque connecteur traduit pour son pilote. Pas d'ORM ni d'Alembic : un script de création de schéma par moteur.
 - **Contrôles portés par le schéma et le code, pas par le moteur** : contraintes déclarées explicitement (`NOT NULL`, `CHECK`, `UNIQUE`, clés étrangères) et validation des données côté domaine/API avant l'écriture.
 - **SQLite configuré au maximum de sa rigueur** (voir ci-dessous).
 - **CI renforcée** : la même suite de tests d'intégration du repository tourne sur SQLite **et** sur PostgreSQL (service container GitHub Actions). Un test qui passe sur l'un et échoue sur l'autre bloque le pipeline.
 - **Déploiement** : un serveur PostgreSQL fonctionne que l'API et le réentraînement tournent sur une ou deux machines. La question n'influence plus le choix du moteur.
 - **Outillage** : DBeaver pour consulter les données, aussi bien la base SQLite de dev que PostgreSQL.
-- **Architecture** : l'accès aux commandes passe par un port `outbound/order_repository.py`. Changer de moteur revient à changer la configuration, voire à écrire un nouvel adapter, sans toucher au métier ni aux routes.
+- **Architecture** : l'accès aux commandes passe par un port `outbound/order_repository_interface.py`. Changer de moteur revient à changer la configuration, voire à écrire un nouvel adapter, sans toucher au métier ni aux routes.
 
 #### Configuration stricte de SQLite (obligatoire)
 
@@ -73,7 +73,7 @@ SQLite doit appliquer les règles **au moins aussi strictement que PostgreSQL**.
 
 Conséquences de ce choix :
 
-- **Les types diffèrent entre SQLite et PostgreSQL** : une table `STRICT` n'accepte que `INTEGER`, `REAL`, `TEXT`, `BLOB` et `ANY`. Les types `BOOLEAN`, `TIMESTAMP` ou `VARCHAR` doivent donc être traduits côté SQLite. L'outil d'abstraction SQL et de migrations retenu devra le permettre.
+- **Les types diffèrent entre SQLite et PostgreSQL** : une table `STRICT` n'accepte que `INTEGER`, `REAL`, `TEXT`, `BLOB` et `ANY`. Les types `BOOLEAN`, `TIMESTAMP` ou `VARCHAR` sont donc traduits côté SQLite (`INTEGER` + `CHECK`, `TEXT` ISO 8601 en UTC + `CHECK`). D'où un script de schéma par moteur, avec les mêmes contraintes des deux côtés.
 - **Des tests vérifient la configuration elle-même** : au démarrage d'une connexion SQLite, on contrôle que `foreign_keys` vaut `1` et que chaque table est bien `STRICT`. Un test insère volontairement des données invalides (mauvais type, clé étrangère orpheline, statut inconnu, chaîne trop longue) et vérifie qu'elles sont **rejetées sur les deux moteurs**.
 - **Limites résiduelles**, couvertes par les tests sur PostgreSQL en CI : SQLite accepte certaines syntaxes laxistes (par exemple une chaîne entre guillemets doubles `"..."` traitée comme un littéral) et son `LIKE` ignore la casse, contrairement à PostgreSQL.
 
@@ -153,7 +153,7 @@ Aucun service ne peut modifier la base d'un autre.
 - **Chaque entraînement est un run MLflow** : paramètres, métriques et modèle y sont enregistrés. Le modèle est inscrit dans le Model Registry sous un nom unique, et la version en production est désignée par un alias.
 - **Traçabilité avec l'ADR-0001** : la version du modèle stockée avec chaque prédiction correspond à la version du Model Registry.
 - **Dépendance au démarrage** : l'API charge le modèle **une seule fois au démarrage** et le garde en mémoire. Elle ne sollicite pas MLflow à chaque prédiction.
-- **Architecture** : l'accès au modèle passe par un port `outbound/model_repository.py`, implémenté par un adapter `MlflowModelRepository`. L'API et le métier ne dépendent pas directement de MLflow, et un autre adapter (par exemple sur fichiers locaux pour les tests) reste possible.
+- **Architecture** : l'accès au modèle passe par un port `outbound/model_repository_interface.py`, implémenté par un adapter `MlflowModelRepository`. L'API et le métier ne dépendent pas directement de MLflow, et un autre adapter (par exemple sur fichiers locaux pour les tests) reste possible.
 
 ### Points restant ouverts
 
@@ -200,7 +200,7 @@ Pour industrialiser, l'entraînement doit :
 
 ### Conséquences
 
-- **Architecture** : l'entraînement est un use case de la couche `application`, appelé par un adapter d'entrée en ligne de commande (`infrastructure/adapter/cli/`), comme l'API est un adapter d'entrée HTTP. Il dépend uniquement de ports (`order_repository`, `model_repository`, et un port d'entraînement), sans connaître directement SQL, scikit-learn ni MLflow.
+- **Architecture** : l'entraînement est un use case de la couche `application`, appelé par un adapter d'entrée en ligne de commande (`infrastructure/adapter/cli/`), comme l'API est un adapter d'entrée HTTP. Il dépend uniquement de ports (`OrderRepositoryInterface`, `ModelRepositoryInterface`, et un port d'entraînement), sans connaître directement SQL, scikit-learn ni MLflow.
 - **Migration du notebook** : le code utile du notebook est extrait vers `src/`. La génération de données fictives n'est pas du code de production ; elle va dans les fixtures de test ou dans un script d'alimentation de la base de dev. L'exploration et les graphiques restent dans le notebook.
 - **Préparation des variables dans le pipeline** : le nettoyage et la préparation des variables sont intégrés autant que possible au pipeline scikit-learn enregistré dans MLflow, pour garantir un traitement identique à l'entraînement et à la prédiction.
 - **Autres outils possibles** sur le même modèle : calcul des métriques réelles en production, promotion d'une version, alimentation de la base de dev.
