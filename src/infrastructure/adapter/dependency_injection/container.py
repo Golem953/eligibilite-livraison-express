@@ -11,12 +11,25 @@ Ajouter un moteur = écrire sa fabrique et l'enregistrer dans _REPOSITORY_FACTOR
 
 from collections.abc import Callable
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from application.port.outbound.order_repository_interface import (
     OrderRepositoryInterface,
 )
 from infrastructure.config.settings import get_settings
+from infrastructure.interface.training_launcher_interface import (
+    TrainingLauncherInterface,
+)
 from infrastructure.repository.sql_order_repository import SqlOrderRepository
+
+if TYPE_CHECKING:
+    from application.port.inbound.predict_eligibility_interface import (
+        PredictEligibilityInterface,
+    )
+    from application.port.outbound.eligibility_predictor_interface import (
+        EligibilityPredictorInterface,
+    )
+    from application.services.train_service import TrainService
 
 
 def _sqlite_order_repository(url: str) -> OrderRepositoryInterface:
@@ -59,3 +72,60 @@ def build_order_repository(database_url: str) -> OrderRepositoryInterface:
 def get_order_repository() -> OrderRepositoryInterface:
     """À injecter dans les routes avec `Depends(get_order_repository)`."""
     return build_order_repository(get_settings().database_url)
+
+
+@lru_cache
+def get_training_launcher() -> TrainingLauncherInterface:
+    """Une seule instance : elle sait si un entraînement est déjà en cours."""
+    from infrastructure.ml.subprocess_training_launcher import (
+        SubprocessTrainingLauncher,
+    )
+
+    return SubprocessTrainingLauncher()
+
+
+def get_train_service() -> TrainService:
+    """Utilisé par la CLI d'entraînement uniquement. Imports locaux : l'API ne
+    charge jamais le code d'entraînement (ADR-0003)."""
+    from application.services.train_service import TrainService
+    from infrastructure.config.training_config import get_training_config
+    from infrastructure.ml.sklearn_model_trainer import SklearnModelTrainer
+    from infrastructure.repository.mlflow_model_repository import (
+        MlflowModelRepository,
+    )
+
+    config = get_training_config()
+    return TrainService(
+        orders=get_order_repository(),
+        trainer=SklearnModelTrainer(config),
+        models=MlflowModelRepository(
+            get_settings().mlflow_tracking_uri, config.promotion.alias
+        ),
+        champion_metrics=config.promotion.metrics,
+    )
+
+
+@lru_cache
+def get_eligibility_predictor() -> EligibilityPredictorInterface:
+    """Une seule instance : elle garde le modèle champion en mémoire."""
+    from infrastructure.config.training_config import get_training_config
+    from infrastructure.ml.predict.mlflow_eligibility_predictor import (
+        MlflowEligibilityPredictor,
+    )
+
+    config = get_training_config()
+    return MlflowEligibilityPredictor(
+        tracking_uri=get_settings().mlflow_tracking_uri,
+        champion_alias=config.promotion.alias,
+        feature_columns=config.features.feature_columns,
+        threshold=config.decision.threshold,
+    )
+
+
+def get_predict_service() -> PredictEligibilityInterface:
+    """À injecter dans les routes avec `Depends(get_predict_service)`."""
+    from application.services.predict_service import PredictService
+
+    return PredictService(
+        orders=get_order_repository(), predictor=get_eligibility_predictor()
+    )

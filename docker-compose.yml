@@ -1,6 +1,7 @@
 # Lancement : docker compose --env-file .env.dev up -d --build   (ou .env.prod)
 # DATABASE (sqlite | postgresql) choisit les conteneurs : COMPOSE_PROFILES=${DATABASE}
 # n'active le service db qu'avec postgresql. DATABASE_URL est passé à l'API.
+# Le serveur MLflow (ADR-0002) est toujours lancé ; interface sur le port 8059.
 # Modèle des variables : .env.example.
 
 # Bloc partagé : rotation des logs (mêmes réglages que la prod)
@@ -18,20 +19,24 @@ services:
       db:
         condition: service_healthy
         required: false  # db n'existe qu'avec DATABASE=postgresql
+      mlflow:
+        condition: service_healthy
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_DISABLE_AGENT_HINT: "1"
     ports:
       - "8057:8000"
     volumes:
-      # Fichier SQLite conservé entre deux redémarrages (DATABASE=sqlite).
-      - sqlite_data:/home/user/data
+      # Dossier data/ du projet partagé avec la machine (DATABASE=sqlite) : la base
+      # remplie par tools/generate_orders.py est celle que voit l'API.
+      - ./data:/home/user/data
     networks:
       - default
       - eligible-livraison-express-network
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      # Reste "unhealthy" tant que la route /health n'existe pas dans l'API.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 15s
       timeout: 5s
@@ -68,9 +73,40 @@ services:
       - no-new-privileges:true
     logging: *default-logging
 
+  mlflow:
+    # Même version que le client mlflow de requirements.txt.
+    image: ghcr.io/mlflow/mlflow:v3.17.0
+    container_name: eligible-livraison-express-api-mlflow
+    restart: unless-stopped
+    # Métadonnées (runs, Model Registry) : SQLite dans le volume, remplaçable par
+    # MLFLOW_BACKEND_STORE_URI (base mlflow de PostgreSQL, ADR-0002).
+    # Fichiers des modèles : volume Docker (ADR-0002), servis par l'API du serveur.
+    # --allowed-hosts : le serveur refuse par défaut les appels vers « mlflow:5000 ».
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000 --workers 1
+      --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow/mlflow.db}
+      --artifacts-destination /mlflow/mlartifacts
+      --allowed-hosts mlflow,mlflow:5000,localhost,localhost:*,127.0.0.1,127.0.0.1:*
+    ports:
+      - "8059:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - default
+      - eligible-livraison-express-network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
 volumes:
   postgres_data:
-  sqlite_data:
+  mlflow_data:
 
 networks:
   eligible-livraison-express-network:

@@ -1,0 +1,100 @@
+# Paramètres choisis par un humain (repris du notebook) : qualité des données,
+# variables, découpage, modèle, évaluation, seuil de décision, règle du champion.
+# Modifier ici, pas dans le code. Chargé par training_config.py.
+
+[quality]
+# Colonnes qui doivent exister dans le jeu de données (contrôle qualité).
+required_columns = [
+    "order_id",
+    "order_date",
+    "hour",
+    "day_of_week",
+    "weekend",
+    "distance_km",
+    "order_value_eur",
+    "weight_kg",
+    "stock_available",
+    "preparation_time_min",
+    "carrier_capacity",
+    "weather",
+    "delivery_zone",
+    "customer_type",
+    "express_eligible",
+]
+# Nettoyage : lignes supprimées si l'un de ces champs est vide.
+essential_columns = [
+    "order_id",
+    "distance_km",
+    "weight_kg",
+    "stock_available",
+    "preparation_time_min",
+    "carrier_capacity",
+    "express_eligible",
+]
+# Identifiant métier : doublons supprimés au nettoyage, refusés au contrôle.
+id_column = "order_id"
+date_column = "order_date"
+
+# Bornes des valeurs numériques (min et / ou max, inclus).
+[quality.bounds]
+hour = { min = 0, max = 23 }
+distance_km = { min = 0 }
+weight_kg = { min = 0 }
+preparation_time_min = { min = 0 }
+carrier_capacity = { min = 0, max = 1 }
+
+# Valeurs autorisées.
+[quality.allowed_values]
+stock_available = [0, 1]
+
+[features]
+target_column = "express_eligible"
+
+# Les identifiants et les dates brutes ne sont pas utilisés directement
+# par le modèle dans cette première version.
+# Variables du modèle = numeric_features + categorical_features, dans cet ordre.
+numeric_features = [
+    "hour",
+    "day_of_week",
+    "weekend",
+    "distance_km",
+    "order_value_eur",
+    "weight_kg",
+    "stock_available",
+    "preparation_time_min",
+    "carrier_capacity",
+]
+categorical_features = [
+    "weather",
+    "delivery_zone",
+    "customer_type",
+]
+
+[split]
+test_size = 0.20
+random_state = 42
+
+[model]
+numeric_imputer_strategy = "median"
+categorical_imputer_strategy = "most_frequent"
+max_iter = 1000
+class_weight = "balanced"
+
+[evaluation]
+# Scores calculés à chaque entraînement et enregistrés dans MLflow.
+# Disponibles : accuracy, precision, recall, f1_score, roc_auc,
+# balanced_accuracy, average_precision
+metrics = ["accuracy", "precision", "recall", "f1_score", "roc_auc"]
+
+[decision]
+# Par défaut, la classification utilise un seuil de 0,5. Pour une application
+# réelle, ce seuil devra être choisi avec le métier.
+threshold = 0.5
+
+[promotion]
+# Scores qui désignent le champion, par ordre de priorité : le 1er décide,
+# les suivants départagent en cas d'égalité. Une nouvelle version devient
+# champion si elle gagne, ou s'il n'y a pas encore de champion.
+# Doivent faire partie de evaluation.metrics.
+metrics = ["f1_score"]
+alias = "champion"

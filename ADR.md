@@ -47,6 +47,7 @@ Ce que le stockage doit permettre :
 
 ### Conséquences
 
+- **Flux de `POST /predict` (implémenté)** : le modèle champion prédit d'abord, puis la commande est enregistrée directement au statut « prédite » en une seule écriture. Sans modèle disponible, rien n'est enregistré (réponse 503), ce qui évite des commandes « reçues » orphelines et des doublons d'identifiant quand le client réessaie.
 - **Commandes historiques** : une commande peut être au statut « labellisée » sans avoir de prédiction (commande antérieure au modèle, par exemple les données d'amorçage). Le statut « labellisée » exige le label réel ; la prédiction y est soit complète, soit totalement absente.
 - **Choix du moteur par configuration** : l'URL de connexion (`DATABASE_URL`) détermine le moteur. Le choix de l'adapter se fait uniquement dans la composition root (`dependency_injection`).
 - **Code agnostique du moteur** : aucune fonctionnalité spécifique à un SGBD (`JSONB`, syntaxes d'upsert propres à un moteur, fonctions de date spécifiques). L'argument « `JSONB` » de PostgreSQL est donc abandonné. Accès SQL par **pilotes natifs** (`sqlite3`, `psycopg`) derrière une interface `DatabaseConnectorInterface` (une implémentation par moteur, choisie dans la composition root). Les requêtes utilisent une convention unique de paramètres nommés `:nom`, que chaque connecteur traduit pour son pilote. Pas d'ORM ni d'Alembic : un script de création de schéma par moteur.
@@ -146,7 +147,10 @@ Aucun service ne peut modifier la base d'un autre.
 
 ### Conséquences
 
-- **Nouveau service** : un conteneur serveur MLflow s'ajoute au docker-compose, aux côtés de l'API et de la base.
+- **Nouveau service** : un conteneur serveur MLflow (`ghcr.io/mlflow/mlflow`, même version que le client) s'ajoute au docker-compose, aux côtés de l'API et de la base. Il est lancé avec `--allowed-hosts`, sans quoi il refuse les appels de l'API vers `mlflow:5000`.
+- **État actuel de l'implémentation** : le backend store est pour l'instant un fichier SQLite dans le volume du serveur MLflow, quel que soit l'environnement ; la base `mlflow` de PostgreSQL et son utilisateur restent à mettre en place (variable `MLFLOW_BACKEND_STORE_URI`, pilote PostgreSQL à ajouter à l'image MLflow). Hors Docker, le client utilise `sqlite:///data/mlflow.db`.
+- **Promotion automatique du champion** (décidé le 07/10/2026) : après chaque entraînement, la nouvelle version reçoit l'alias `champion` si elle bat le champion actuel, ou s'il n'y a pas encore de champion. Les scores de référence sont une liste ordonnée dans `infrastructure/config/training.toml` (`[promotion].metrics`, parmi `[evaluation].metrics`) : le premier décide, les suivants départagent les égalités ; égalité sur tous : le champion est conservé. Les scores comparés sont calculés sur des jeux de test différents d'un entraînement à l'autre.
+- **Format des modèles** : MLflow 3 enregistre les modèles scikit-learn au format skops, qui n'accepte au rechargement que les types déclarés sûrs (`skops_trusted_types`).
 - **Initialisation de PostgreSQL** : un script exécuté au premier démarrage du conteneur crée les deux bases (`commandes`, `mlflow`) et leurs utilisateurs, chacun propriétaire de sa base uniquement.
 - **Secrets** : deux couples identifiant / mot de passe à fournir par variables d'environnement (`.env`, non versionné), un par base.
 - **Volume des artéfacts** : lié à la machine hôte. Sa sauvegarde est à prévoir explicitement. En cas de passage à plusieurs machines, l'artifact store pourra migrer vers un stockage S3-compatible (MinIO) en changeant uniquement la configuration du serveur MLflow, sans toucher au code de l'API ni de l'outil d'entraînement.
@@ -159,10 +163,9 @@ Aucun service ne peut modifier la base d'un autre.
 ### Points restant ouverts
 
 - **Artifact store en dev** (sans Docker) : simple dossier local, par cohérence avec le « dev léger » de l'ADR-0001 ?
-- **Promotion en production** : automatique si le nouveau modèle fait mieux que l'actuel (champion / challenger), ou validée par un humain ?
 - **Prise en compte d'un nouveau modèle par l'API** : au redémarrage, via une route de rechargement, ou par vérification périodique ?
 - **Reproductibilité des données** : enregistrer dans le run la période ou une empreinte du jeu d'entraînement extrait de la base ?
-- **Interface MLflow** : exposée ou non, et à qui ?
+- **Interface MLflow** : publiée pour l'instant sur le port 8059. À confirmer, et à protéger si le port reste ouvert sur le réseau.
 
 ---
 
@@ -198,6 +201,7 @@ Pour industrialiser, l'entraînement doit :
 - **Même dépôt, même `src/`** : l'API et l'outil partagent le domaine (la commande et ses règles de validité), les ports et les repositories. Une évolution du modèle (nouvelle variable, par exemple) modifie l'entraînement et la prédiction dans le même commit.
 - **Deux points d'entrée distincts** : l'API est un service qui tourne en permanence ; l'outil d'entraînement est lancé, fait son travail, puis s'arrête.
 - **Isolation** : l'API n'importe jamais le code d'entraînement, et l'outil d'entraînement n'importe jamais FastAPI.
+- **Déclenchement par l'API** : la route `POST /train` démarre l'outil d'entraînement dans un **processus séparé** (`python -m infrastructure.adapter.cli.train`) et répond immédiatement (202). Un seul entraînement à la fois (409 sinon). L'outil reste utilisable à la main avec la même commande.
 
 ### Conséquences
 
@@ -208,7 +212,8 @@ Pour industrialiser, l'entraînement doit :
 
 ### Points restant ouverts
 
-- **Déclenchement** : manuel, planifié (cron), sur condition de données (N nouvelles commandes labellisées), sur dégradation des métriques en production, ou sur changement de code (CI) ?
-- **Image Docker** : une seule image partagée lancée avec deux commandes, ou deux images distinctes ?
-- **Promotion en production** et **rechargement du modèle par l'API** (repris de l'ADR-0002) : automatiques ou manuels ?
+- **Déclenchement automatique** : en plus de la route `/train` et de la commande manuelle, faut-il un déclenchement planifié (cron), sur condition de données, sur dégradation des métriques, ou par la CI ?
+- **Image Docker** : de fait une seule image, puisque `/train` lance l'entraînement dans le conteneur de l'API. À confirmer.
+- **Sécurité de `/train`** : la route n'est pas authentifiée alors que le port 8057 est publié sur le réseau.
+- **Rechargement du modèle par l'API** (repris de l'ADR-0002) : au redémarrage, via une route, ou par vérification périodique de l'alias `champion` ?
 - **Structure détaillée de `src/`** pour l'entraînement : à valider au moment de l'implémentation.
