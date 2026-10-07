@@ -1,0 +1,20 @@
+# Exclus du contexte de build : environnements, secrets, données et outils de dev
+.git
+.github
+.venv
+venv
+.env
+.env.*
+data
+mlruns
+mlartifacts
+artifacts
+tools
+tests
+deploy
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.ipynb_checkpoints
+*.ipynb

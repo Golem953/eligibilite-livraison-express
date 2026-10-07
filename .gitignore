@@ -18,3 +18,5 @@ data/*
 !data/.gitkeep
 
 .env
+.env.dev
+.env.prod

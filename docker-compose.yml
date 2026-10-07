@@ -1,0 +1,77 @@
+# Lancement : docker compose --env-file .env.dev up -d --build   (ou .env.prod)
+# DATABASE (sqlite | postgresql) choisit les conteneurs : COMPOSE_PROFILES=${DATABASE}
+# n'active le service db qu'avec postgresql. DATABASE_URL est passé à l'API.
+# Modèle des variables : .env.example.
+
+# Bloc partagé : rotation des logs (mêmes réglages que la prod)
+x-logging: &default-logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  app:
+    build:
+      context: .
+    container_name: eligible-livraison-express-api-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false  # db n'existe qu'avec DATABASE=postgresql
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "8057:8000"
+    volumes:
+      # Fichier SQLite conservé entre deux redémarrages (DATABASE=sqlite).
+      - sqlite_data:/home/user/data
+    networks:
+      - default
+      - eligible-livraison-express-network
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # Reste "unhealthy" tant que la route /health n'existe pas dans l'API.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+
+  db:
+    profiles: ["postgresql"]
+    # Version majeure figée : parité CI / prod.
+    image: postgres:17
+    container_name: eligible-livraison-express-api-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "8058:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Scripts exécutés au premier démarrage (base vide) uniquement.
+      - ./db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - default
+      - eligible-livraison-express-network
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  sqlite_data:
+
+networks:
+  eligible-livraison-express-network:
+    driver: bridge

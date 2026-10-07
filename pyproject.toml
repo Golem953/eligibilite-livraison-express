@@ -7,7 +7,7 @@ name = "eligibilite-livraison-express"
 version = "1.0.0"
 description = "Prédiction de l'éligibilité d'une commande à la livraison express (architecture hexagonale)."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
     "pandas>=2.0",
     "numpy>=1.26",
@@ -27,6 +27,7 @@ dev = [
     "matplotlib>=3.8",
     "seaborn>=0.13",
     "jupyter>=1.0",
+    "uv>=0.4",
 ]
 
 [tool.setuptools.packages.find]
@@ -41,7 +42,7 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py314"
 src = ["src"]
 
 [tool.ruff.lint]

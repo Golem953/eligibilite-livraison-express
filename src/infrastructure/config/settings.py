@@ -1,5 +1,5 @@
 """Lecture de la configuration : le seul endroit qui lit les variables
-d'environnement (alimentées par le fichier .env, voir .env.example)."""
+d'environnement (alimentées par .env.dev ou .env.prod, voir .env.example)."""
 
 import os
 from dataclasses import dataclass

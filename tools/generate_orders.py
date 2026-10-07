@@ -1,5 +1,5 @@
 """Génère des commandes fictives (repris du notebook d'exploration) et les
-enregistre dans la base configurée par DATABASE_URL.
+enregistre dans la base configurée par DATABASE_URL (voir .env.example).
 
 Usage :
     python tools/generate_orders.py
@@ -160,7 +160,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42, help="graine aléatoire")
     args = parser.parse_args()
 
-    print(f"Base cible : {get_settings().database_url}")
+    # Seul le moteur est affiché : l'URL complète contient le mot de passe.
+    print(f"Base cible : {get_settings().database_url.split('://', 1)[0]}")
     mode = ask_mode()
     if mode is None:
         print("Annulé, la base n'a pas été modifiée.")
