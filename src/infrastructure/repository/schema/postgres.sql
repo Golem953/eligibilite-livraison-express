@@ -43,10 +43,13 @@ CREATE TABLE IF NOT EXISTS orders (
             AND predicted_eligible IS NOT NULL AND eligibility_probability IS NOT NULL
             AND model_version IS NOT NULL AND predicted_at IS NOT NULL
             AND real_label IS NULL)
-        OR (status = 'labellisee'
-            AND predicted_eligible IS NOT NULL AND eligibility_probability IS NOT NULL
-            AND model_version IS NOT NULL AND predicted_at IS NOT NULL
-            AND real_label IS NOT NULL)
+        -- Labellisée : avec prédiction, ou sans (commande historique, antérieure
+        -- au modèle).
+        OR (status = 'labellisee' AND real_label IS NOT NULL
+            AND ((predicted_eligible IS NOT NULL AND eligibility_probability IS NOT NULL
+                  AND model_version IS NOT NULL AND predicted_at IS NOT NULL)
+                 OR (predicted_eligible IS NULL AND eligibility_probability IS NULL
+                     AND model_version IS NULL AND predicted_at IS NULL)))
     )
 );
 

@@ -19,6 +19,17 @@ class OrderRepositoryInterface(ABC):
         """
 
     @abstractmethod
+    def save_all(self, orders: list[Order]) -> None:
+        """Enregistre plusieurs commandes d'un coup (tout ou rien).
+
+        Lève ValueError si l'une d'elles est refusée.
+        """
+
+    @abstractmethod
+    def delete_all(self) -> None:
+        """Supprime toutes les commandes. Réservé aux outils de développement."""
+
+    @abstractmethod
     def find_by_id(self, order_id: str) -> Order | None:
         """Renvoie la commande, ou None si elle n'existe pas."""
 

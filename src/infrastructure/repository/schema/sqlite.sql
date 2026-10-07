@@ -31,8 +31,9 @@ CREATE TABLE IF NOT EXISTS orders (
     eligibility_probability REAL    CHECK (eligibility_probability BETWEEN 0 AND 1),
     model_version           TEXT    CHECK (length(model_version) BETWEEN 1 AND 50),
     predicted_at            TEXT
-                                    CHECK (predicted_at LIKE '____-__-__T__:__:__.______+00:00'
-                                           AND datetime(predicted_at) IS NOT NULL),
+                                    CHECK (predicted_at IS NULL
+                                           OR (predicted_at LIKE '____-__-__T__:__:__.______+00:00'
+                                               AND datetime(predicted_at) IS NOT NULL)),
     real_label              INTEGER CHECK (real_label IN (0, 1)),
     -- Cohérence entre le statut et les colonnes remplies.
     CHECK (
@@ -44,10 +45,13 @@ CREATE TABLE IF NOT EXISTS orders (
             AND predicted_eligible IS NOT NULL AND eligibility_probability IS NOT NULL
             AND model_version IS NOT NULL AND predicted_at IS NOT NULL
             AND real_label IS NULL)
-        OR (status = 'labellisee'
-            AND predicted_eligible IS NOT NULL AND eligibility_probability IS NOT NULL
-            AND model_version IS NOT NULL AND predicted_at IS NOT NULL
-            AND real_label IS NOT NULL)
+        -- Labellisée : avec prédiction, ou sans (commande historique, antérieure
+        -- au modèle).
+        OR (status = 'labellisee' AND real_label IS NOT NULL
+            AND ((predicted_eligible IS NOT NULL AND eligibility_probability IS NOT NULL
+                  AND model_version IS NOT NULL AND predicted_at IS NOT NULL)
+                 OR (predicted_eligible IS NULL AND eligibility_probability IS NULL
+                     AND model_version IS NULL AND predicted_at IS NULL)))
     )
 ) STRICT;
 

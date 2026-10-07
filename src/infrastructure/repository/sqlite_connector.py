@@ -1,5 +1,5 @@
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +39,10 @@ class SqliteConnector(DatabaseConnectorInterface):
     def execute(self, query: str, params: Params | None = None) -> int:
         with self._connect() as connection:
             return connection.execute(query, _adapt(params)).rowcount
+
+    def execute_many(self, query: str, params_list: Sequence[Params]) -> None:
+        with self._connect() as connection:
+            connection.executemany(query, [_adapt(params) for params in params_list])
 
     def fetch_one(self, query: str, params: Params | None = None) -> Row | None:
         with self._connect() as connection:

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 Params = Mapping[str, Any]
@@ -35,6 +35,11 @@ class DatabaseConnectorInterface(ABC):
     def execute(self, query: str, params: Params | None = None) -> int:
         """Exécute un INSERT / UPDATE / DELETE et renvoie le nombre de lignes
         touchées."""
+
+    @abstractmethod
+    def execute_many(self, query: str, params_list: Sequence[Params]) -> None:
+        """Exécute la même requête pour chaque jeu de paramètres, dans une seule
+        transaction."""
 
     @abstractmethod
     def fetch_one(self, query: str, params: Params | None = None) -> Row | None:

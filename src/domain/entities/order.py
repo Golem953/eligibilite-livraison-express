@@ -123,12 +123,14 @@ class Order:
 
         has_prediction = self.prediction is not None
         has_label = self.real_label is not None
-        expected = {
-            OrderStatus.RECEIVED: (False, False),
-            OrderStatus.PREDICTED: (True, False),
-            OrderStatus.LABELLED: (True, True),
+        # Une commande labellisée peut ne pas avoir de prédiction : commande
+        # historique, antérieure au modèle (données d'amorçage).
+        allowed = {
+            OrderStatus.RECEIVED: {(False, False)},
+            OrderStatus.PREDICTED: {(True, False)},
+            OrderStatus.LABELLED: {(True, True), (False, True)},
         }[self.status]
-        if (has_prediction, has_label) != expected:
+        if (has_prediction, has_label) not in allowed:
             raise ValueError(
                 f"Statut « {self.status} » incohérent : prédiction "
                 f"{'présente' if has_prediction else 'absente'}, label réel "

@@ -47,6 +47,7 @@ Ce que le stockage doit permettre :
 
 ### Conséquences
 
+- **Commandes historiques** : une commande peut être au statut « labellisée » sans avoir de prédiction (commande antérieure au modèle, par exemple les données d'amorçage). Le statut « labellisée » exige le label réel ; la prédiction y est soit complète, soit totalement absente.
 - **Choix du moteur par configuration** : l'URL de connexion (par exemple `DATABASE_URL`) détermine le moteur. Le choix de l'adapter se fait uniquement dans la composition root (`dependency_injection`).
 - **Code agnostique du moteur** : aucune fonctionnalité spécifique à un SGBD (`JSONB`, syntaxes d'upsert propres à un moteur, fonctions de date spécifiques). L'argument « `JSONB` » de PostgreSQL est donc abandonné. Accès SQL par **pilotes natifs** (`sqlite3`, `psycopg`) derrière une interface `DatabaseConnectorInterface` (une implémentation par moteur, choisie dans la composition root). Les requêtes utilisent une convention unique de paramètres nommés `:nom`, que chaque connecteur traduit pour son pilote. Pas d'ORM ni d'Alembic : un script de création de schéma par moteur.
 - **Contrôles portés par le schéma et le code, pas par le moteur** : contraintes déclarées explicitement (`NOT NULL`, `CHECK`, `UNIQUE`, clés étrangères) et validation des données côté domaine/API avant l'écriture.

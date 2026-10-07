@@ -1,5 +1,5 @@
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -35,6 +35,10 @@ class PostgresConnector(DatabaseConnectorInterface):
         with self._connect() as connection:
             return connection.execute(*_to_psycopg(query, params)).rowcount
 
+    def execute_many(self, query: str, params_list: Sequence[Params]) -> None:
+        with self._connect() as connection:
+            connection.cursor().executemany(_to_pyformat(query), params_list)
+
     def fetch_one(self, query: str, params: Params | None = None) -> Row | None:
         with self._connect() as connection:
             return connection.execute(*_to_psycopg(query, params)).fetchone()
@@ -59,5 +63,9 @@ def _to_psycopg(query: str, params: Params | None) -> tuple[str, Params | None]:
     `%(nom)s`."""
     if params is None:
         return query, None
+    return _to_pyformat(query), params
+
+
+def _to_pyformat(query: str) -> str:
     escaped = query.replace("%", "%%")
-    return _NAMED_PARAMETER.sub(r"%(\1)s", escaped), params
+    return _NAMED_PARAMETER.sub(r"%(\1)s", escaped)

@@ -37,6 +37,10 @@ _STATE_COLUMNS = (
 )
 _ALL_COLUMNS = _FEATURE_COLUMNS + _STATE_COLUMNS
 _SELECT = f"SELECT {', '.join(_ALL_COLUMNS)} FROM orders"
+_INSERT = (
+    f"INSERT INTO orders ({', '.join(_ALL_COLUMNS)})"
+    f" VALUES ({', '.join(f':{column}' for column in _ALL_COLUMNS)})"
+)
 
 
 class SqlOrderRepository(OrderRepositoryInterface):
@@ -50,19 +54,25 @@ class SqlOrderRepository(OrderRepositoryInterface):
         self._connector = connector
 
     def save(self, order: Order) -> None:
-        columns = ", ".join(_ALL_COLUMNS)
-        placeholders = ", ".join(f":{column}" for column in _ALL_COLUMNS)
         try:
-            self._connector.execute(
-                f"INSERT INTO orders ({columns}) VALUES ({placeholders})",
-                _order_to_params(order),
-            )
+            self._connector.execute(_INSERT, _order_to_params(order))
         except DatabaseConstraintError as error:
             if self.find_by_id(order.order_id) is not None:
                 raise ValueError(
                     f"La commande {order.order_id} existe déjà."
                 ) from error
             raise
+
+    def save_all(self, orders: list[Order]) -> None:
+        try:
+            self._connector.execute_many(
+                _INSERT, [_order_to_params(order) for order in orders]
+            )
+        except DatabaseConstraintError as error:
+            raise ValueError(f"Insertion refusée par la base : {error}") from error
+
+    def delete_all(self) -> None:
+        self._connector.execute("DELETE FROM orders")
 
     def find_by_id(self, order_id: str) -> Order | None:
         row = self._connector.fetch_one(
