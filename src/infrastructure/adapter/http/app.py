@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 
-from infrastructure.adapter.http.controller.predict_controller import (
-    router as predict_router,
+from infrastructure.adapter.http.controller.orders_controller import (
+    router as orders_router,
 )
 
 app = FastAPI(title="Éligibilité à la livraison express")
-app.include_router(predict_router)
+app.include_router(orders_router)
 
 
 @app.get("/health")
