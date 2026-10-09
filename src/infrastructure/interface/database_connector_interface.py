@@ -21,15 +21,3 @@ class DatabaseConnectorInterface(ABC):
         """Exécute un INSERT / UPDATE / DELETE et renvoie le nombre de lignes
         touchées."""
 
-    @abstractmethod
-    def execute_many(self, query: str, params_list: Sequence[Params]) -> None:
-        """Exécute la même requête pour chaque jeu de paramètres, dans une seule
-        transaction."""
-
-    @abstractmethod
-    def fetch_one(self, query: str, params: Params | None = None) -> Row | None:
-        """Exécute un SELECT et renvoie la première ligne, ou None."""
-
-    @abstractmethod
-    def fetch_all(self, query: str, params: Params | None = None) -> list[Row]:
-        """Exécute un SELECT et renvoie toutes les lignes."""
