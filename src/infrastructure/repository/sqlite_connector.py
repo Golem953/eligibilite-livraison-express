@@ -70,6 +70,11 @@ class SqliteConnector(DatabaseConnectorInterface):
             row = connection.execute(query, _adapt(params)).fetchone()
         return dict(row) if row is not None else None
 
+    def fetch_all(self, query: str, params: Params | None = None) -> list[Row]:
+        with self._connect() as connection:
+            rows = connection.execute(query, _adapt(params)).fetchall()
+        return [dict(row) for row in rows]
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self._database_path)

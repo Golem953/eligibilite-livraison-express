@@ -64,6 +64,11 @@ class PostgresConnector(DatabaseConnectorInterface):
             cursor = connection.cursor(row_factory=dict_row)
             return cursor.execute(*_to_psycopg(query, params)).fetchone()
 
+    def fetch_all(self, query: str, params: Params | None = None) -> list[Row]:
+        with self._connect() as connection:
+            cursor = connection.cursor(row_factory=dict_row)
+            return cursor.execute(*_to_psycopg(query, params)).fetchall()
+
     @contextmanager
     def _connect(self) -> Iterator[psycopg.Connection]:
         try:

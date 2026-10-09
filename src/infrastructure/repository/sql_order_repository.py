@@ -57,19 +57,36 @@ class SqlOrderRepository(OrderRepositoryInterface):
         """Renvoie la commande, ou None si aucune commande n'a cet identifiant."""
         row = self._connector.fetch_one(
             """
-            SELECT
-                order_id, order_date, hour, day_of_week, weekend,
-                distance_km, order_value_eur, weight_kg, stock_available,
-                preparation_time_min, carrier_capacity,
-                weather, delivery_zone, customer_type,
-                status, predicted_eligible, eligibility_probability,
-                model_version, predicted_at, real_label
-            FROM orders
-            WHERE order_id = :order_id
+                SELECT
+                    order_id, order_date, hour, day_of_week, weekend,
+                    distance_km, order_value_eur, weight_kg, stock_available,
+                    preparation_time_min, carrier_capacity,
+                    weather, delivery_zone, customer_type,
+                    status, predicted_eligible, eligibility_probability,
+                    model_version, predicted_at, real_label
+                FROM orders
+                WHERE order_id = :order_id
             """,
             {"order_id": order_id},
         )
         return _row_to_order(row) if row is not None else None
+
+    def find_labelled(self) -> list[Order]:
+        rows = self._connector.fetch_all(
+            """
+                SELECT
+                    order_id, order_date, hour, day_of_week, weekend,
+                    distance_km, order_value_eur, weight_kg, stock_available,
+                    preparation_time_min, carrier_capacity,
+                    weather, delivery_zone, customer_type,
+                    status, predicted_eligible, eligibility_probability,
+                    model_version, predicted_at, real_label
+                FROM orders
+                WHERE real_label IS NOT NULL
+                ORDER BY order_date
+            """
+        )
+        return [_row_to_order(row) for row in rows]
 
 
 def _order_to_params(order: Order) -> dict[str, Any]:

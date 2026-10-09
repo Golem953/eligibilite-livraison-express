@@ -20,3 +20,11 @@ class OrderRepositoryInterface(ABC):
     @abstractmethod
     def get_order_by_id(self, order_id: str) -> Order | None:
         """Renvoie la commande, ou None si aucune commande n'a cet identifiant."""
+
+    @abstractmethod
+    def find_labelled(self) -> list[Order]:
+        """Commandes dont le label réel est connu : le jeu d'entraînement.
+
+        Jamais les prédictions seules, pour éviter la boucle de rétroaction
+        (ADR-0001).
+        """

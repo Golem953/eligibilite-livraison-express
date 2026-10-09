@@ -23,3 +23,7 @@ class DatabaseConnectorInterface(ABC):
     @abstractmethod
     def fetch_one(self, query: str, params: Params | None = None) -> Row | None:
         """Exécute un SELECT et renvoie la première ligne, ou None."""
+
+    @abstractmethod
+    def fetch_all(self, query: str, params: Params | None = None) -> list[Row]:
+        """Exécute un SELECT et renvoie toutes les lignes."""
