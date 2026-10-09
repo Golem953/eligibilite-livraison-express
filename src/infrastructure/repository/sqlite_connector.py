@@ -9,6 +9,7 @@ from infrastructure.interface.database_connector_interface import (
     DatabaseConnectorInterface,
     DatabaseConstraintError,
     Params,
+    Row,
 )
 from infrastructure.repository.migrations import read_migrations
 
@@ -64,10 +65,17 @@ class SqliteConnector(DatabaseConnectorInterface):
         with self._connect() as connection:
             return connection.execute(query, _adapt(params)).rowcount
 
+    def fetch_one(self, query: str, params: Params | None = None) -> Row | None:
+        with self._connect() as connection:
+            row = connection.execute(query, _adapt(params)).fetchone()
+        return dict(row) if row is not None else None
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self._database_path)
         try:
+            # Lignes lisibles par nom de colonne (row["hour"]).
+            connection.row_factory = sqlite3.Row
             # Désactivées par défaut et non persistantes : à activer à chaque
             # connexion.
             connection.execute("PRAGMA foreign_keys = ON")

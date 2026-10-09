@@ -4,11 +4,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg
+from psycopg.rows import dict_row
 
 from infrastructure.interface.database_connector_interface import (
     DatabaseConnectorInterface,
     DatabaseConstraintError,
     Params,
+    Row,
 )
 from infrastructure.repository.migrations import read_migrations
 
@@ -56,6 +58,11 @@ class PostgresConnector(DatabaseConnectorInterface):
     def execute(self, query: str, params: Params | None = None) -> int:
         with self._connect() as connection:
             return connection.execute(*_to_psycopg(query, params)).rowcount
+
+    def fetch_one(self, query: str, params: Params | None = None) -> Row | None:
+        with self._connect() as connection:
+            cursor = connection.cursor(row_factory=dict_row)
+            return cursor.execute(*_to_psycopg(query, params)).fetchone()
 
     @contextmanager
     def _connect(self) -> Iterator[psycopg.Connection]:

@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 
 from domain.entities.order import Order
-from domain.value_objects.prediction import Prediction
 
 
 class OrderRepositoryInterface(ABC):
@@ -18,3 +17,6 @@ class OrderRepositoryInterface(ABC):
         Lève ValueError si l'identifiant existe déjà.
         """
 
+    @abstractmethod
+    def get_order_by_id(self, order_id: str) -> Order | None:
+        """Renvoie la commande, ou None si aucune commande n'a cet identifiant."""

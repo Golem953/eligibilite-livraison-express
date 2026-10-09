@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 Params = Mapping[str, Any]
@@ -11,7 +11,6 @@ class DatabaseConstraintError(Exception):
 
 
 class DatabaseConnectorInterface(ABC):
-
     @abstractmethod
     def create_schema(self) -> None:
         """Crée les tables si elles n'existent pas (script propre au moteur)."""
@@ -21,3 +20,6 @@ class DatabaseConnectorInterface(ABC):
         """Exécute un INSERT / UPDATE / DELETE et renvoie le nombre de lignes
         touchées."""
 
+    @abstractmethod
+    def fetch_one(self, query: str, params: Params | None = None) -> Row | None:
+        """Exécute un SELECT et renvoie la première ligne, ou None."""
