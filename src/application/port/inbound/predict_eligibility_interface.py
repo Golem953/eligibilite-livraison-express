@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
-from domain.entities.order import Order, Prediction
+from domain.entities.order import Order
+from domain.value_objects.prediction import Prediction
 
 
 class PredictEligibilityInterface(ABC):
