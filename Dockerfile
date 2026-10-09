@@ -19,6 +19,8 @@ WORKDIR /home/user
 RUN mkdir data
 
 COPY src .
+# Migrations SQL appliquées par l'API au démarrage (create_schema).
+COPY db/migrations db/migrations
 
 EXPOSE 8000
 

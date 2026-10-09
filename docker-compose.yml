@@ -46,14 +46,19 @@ services:
     container_name: eligible-livraison-express-api-db
     restart: unless-stopped
     environment:
+      # Administrateur du serveur : ne sert qu'à db/01_create_users_and_databases.sh.
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      # Mots de passe des utilisateurs applicatifs (un par base, ADR-0002).
+      COMMANDES_DB_PASSWORD: ${COMMANDES_DB_PASSWORD}
+      MLFLOW_DB_PASSWORD: ${MLFLOW_DB_PASSWORD}
     ports:
       - "8058:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Scripts exécutés au premier démarrage (base vide) uniquement.
+      # Scripts exécutés au premier démarrage (volume vide) uniquement ; le
+      # sous-dossier migrations/ est ignoré ici, c'est l'API qui l'applique.
       - ./db:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]

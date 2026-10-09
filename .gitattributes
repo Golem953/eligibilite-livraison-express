@@ -1,0 +1,2 @@
+# Les scripts shell sont exécutés dans des conteneurs Linux : jamais de CRLF.
+*.sh text eol=lf
