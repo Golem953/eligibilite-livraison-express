@@ -21,6 +21,7 @@ RUN mkdir data
 COPY src .
 # Migrations SQL appliquées par l'API au démarrage (create_schema).
 COPY db/migrations db/migrations
+ENV MIGRATIONS_DIR=/home/user/db/migrations
 
 EXPOSE 8000
 
