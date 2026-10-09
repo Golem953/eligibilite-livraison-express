@@ -11,21 +11,6 @@ class DatabaseConstraintError(Exception):
 
 
 class DatabaseConnectorInterface(ABC):
-    """Interface technique d'accès à une base SQL, une implémentation par moteur.
-
-    Ce n'est pas un port de l'application : seuls les repositories SQL l'utilisent.
-    Changer de moteur revient à changer de connecteur dans la composition root.
-
-    Conventions communes à tous les connecteurs :
-    - paramètres nommés au format `:nom`, jamais de valeur écrite dans la requête ;
-    - chaque appel s'exécute dans sa propre transaction (commit, ou rollback
-      en cas d'erreur) ;
-    - les dates passées en paramètre doivent avoir un fuseau horaire ;
-    - toute donnée refusée par la base lève DatabaseConstraintError.
-
-    Les types renvoyés peuvent différer selon le moteur (un booléen est un int
-    en SQLite, une date est un texte ISO 8601) : le repository les normalise.
-    """
 
     @abstractmethod
     def create_schema(self) -> None:
