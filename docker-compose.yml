@@ -1,0 +1,87 @@
+# Lancement : docker compose up -d --build   (variables lues dans .env, modèle : .env.example)
+#
+# APP_ENV=dev  : api + mlflow, base SQLite dans ./data (partagée avec les outils).
+# APP_ENV=prod : api + mlflow + db PostgreSQL (mettre aussi COMPOSE_PROFILES=prod).
+
+services:
+  api:
+    build: .
+    container_name: eligibilite-livraison-express-api
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+      SQLITE_PATH: /app/data/commandes.db
+      # PostgreSQL (APP_ENV=prod) : mêmes valeurs que le service db. Adresse vue
+      # depuis le réseau Docker (le .env contient celle de la machine).
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-commandes}
+      POSTGRES_USER: ${POSTGRES_USER:-commandes_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      # Pas d'attente de plusieurs minutes si MLflow ne répond pas.
+      MLFLOW_HTTP_REQUEST_MAX_RETRIES: "0"
+      MLFLOW_HTTP_REQUEST_TIMEOUT: "10"
+      MLFLOW_DISABLE_AGENT_HINT: "1"
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Base SQLite de dev : même fichier que tools/ sur la machine.
+      - ./data:/app/data
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+        required: false # db n'existe qu'avec le profil prod
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.17.0
+    container_name: eligibilite-livraison-express-mlflow
+    restart: unless-stopped
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      # Runs, registre et artefacts (modèles) dans le volume mlflow_data.
+      - --backend-store-uri=sqlite:////mlflow/mlflow.db
+      - --artifacts-destination=/mlflow/artifacts
+      - --serve-artifacts
+      # Noms d'hôte acceptés : l'API (mlflow:5000) et la machine (localhost).
+      - --allowed-hosts=mlflow:5000,localhost:${MLFLOW_PORT:-5000},127.0.0.1:${MLFLOW_PORT:-5000}
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  db:
+    profiles: ["prod"]
+    image: postgres:17
+    container_name: eligibilite-livraison-express-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-commandes}
+      POSTGRES_USER: ${POSTGRES_USER:-commandes_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    ports:
+      # Publié pour les outils lancés depuis la machine (tools/train.py --env prod).
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  mlflow_data:
+  postgres_data:

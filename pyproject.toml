@@ -1,0 +1,23 @@
+[project]
+name = "eligibilite-livraison-express"
+version = "1.0.0"
+description = "Prédiction de l'éligibilité d'une commande à la livraison express."
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# config/ est à la racine, domain/ et infrastructure/ dans src/.
+pythonpath = [".", "src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = [".", "src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Depends(...) en valeur par défaut : la façon standard de déclarer une dépendance.
+extend-immutable-calls = ["fastapi.Depends"]
