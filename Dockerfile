@@ -13,13 +13,15 @@ RUN pip install -r requirements.txt
 COPY src/app app
 
 
-# ---------- dev : tout, pour travailler ----------
+# ---------- dev : tout, pour travailler sur son poste ----------
 FROM base AS dev
 
+# pytest, ruff
 COPY requirements-dev.txt .
-RUN pip install -r requirements-dev.txt     # pytest, ruff, jupyter...
+RUN pip install -r requirements-dev.txt
 
-COPY . .                                    # tout le dépôt : notebooks, docs, tests
+# Tout le dépôt : docs, tests (hors fichiers exclus par .dockerignore)
+COPY . .
 
 CMD ["python", "-m", "app", "serve", "--host", "0.0.0.0"]
 
