@@ -167,7 +167,7 @@ Aucun service ne peut modifier la base d'un autre.
 
 ### Contexte
 
-Le code de Machine Learning du notebook (`notebooks/project_test_v1_final_final2.ipynb`) a été extrait dans `src/livraison_express_lite/core/learning/` : pipeline (`MLPipeline`), découpage (`TrainTestSplitter`), entraînement (`MLTrainer`), prédiction (`MLPredict`) et contrat des features (`order_feature.py`). Le notebook reste dans le dépôt comme trace de l'exploration.
+Le code de Machine Learning du notebook (`notebooks/project_test_v1_final_final2.ipynb`) a été extrait dans `src/app/core/learning/` : pipeline (`MLPipeline`), découpage (`TrainTestSplitter`), entraînement (`MLTrainer`), prédiction (`MLPredict`) et contrat des features (`order_feature.py`). Le notebook reste dans le dépôt comme trace de l'exploration.
 
 L'entraînement doit :
 
@@ -187,7 +187,7 @@ L'entraînement doit :
 
 ### Décision
 
-**Option B : l'entraînement est une commande en ligne de commande (`python -m livraison_express_lite train`), dans le même dépôt que l'API, exécutée dans un processus séparé.**
+**Option B : l'entraînement est une commande en ligne de commande (`python -m src.app train`), dans le même dépôt que l'API, exécutée dans un processus séparé.**
 
 - **Même dépôt, même `src/`** : l'API et l'entraînement partagent le domaine (`OrderEntity`), le contrat des features (`FEATURE_COLUMNS`) et les repositories. Une évolution du modèle (une nouvelle variable, par exemple) modifie l'entraînement et la prédiction dans le même commit.
 - **Deux points d'entrée distincts** : `serve` lance un service qui tourne en permanence. `train` est lancé, fait son travail, puis s'arrête avec un code de sortie (0 = succès, 1 = échec) exploitable par un cron ou la CI.
@@ -197,7 +197,7 @@ L'entraînement doit :
 
 - **Isolation à corriger** : aujourd'hui, `api/app.py` importe `Core`, qui importe `MLTrainer` et donc `mlflow` et les métriques d'entraînement. `Core` doit être séparé en deux assemblages : l'un pour servir (modèle chargé + `MLPredict`), l'autre pour entraîner (`MLTrainer` + `MLPipeline`). L'API n'utilise que le premier.
 - **Singleton à revoir** : `Core` est un singleton dont l'état dépend du premier appel (`load_model`). Une factory explicite par point d'entrée simplifie les tests et évite qu'une configuration fuie d'un test à l'autre (voir la section 12 de l'architecture).
-- **Nom du module à aligner** : la documentation de la CLI annonce `python -m livraison_express`, alors que le package s'appelle `livraison_express_lite`. `cli.py` mélange aussi des imports absolus `src.livraison_express_lite…` et des imports relatifs. Il faut uniformiser en imports relatifs pour que le package installé fonctionne.
+- **Imports à uniformiser** : `cli.py` et `order_generator.py` utilisent des imports absolus `src.app…`, alors que le reste du package utilise des imports relatifs. Les commandes ne fonctionnent donc qu'en lançant `python -m src.app` depuis la racine du dépôt. Il faut uniformiser en imports relatifs pour que le package installé (`python -m app`) fonctionne.
 - **Données d'entraînement** : `train` lit les commandes labellisées dans la base (ADR-0001) et non plus le générateur en mémoire. La génération de données synthétiques devient une commande séparée qui alimente la base de dev ; elle n'est pas du code de production.
 - **Préparation des variables dans le pipeline** : le nettoyage et la préparation des variables restent intégrés au pipeline scikit-learn (`MLPipeline`) enregistré dans MLflow. Cela garantit un traitement identique à l'entraînement et à la prédiction.
 - **La model card est construite à partir du contrat** : `Core.train_model()` recopie aujourd'hui la liste des features en dur. Elle doit utiliser `FEATURE_COLUMNS` (DRY).

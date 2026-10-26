@@ -1,4 +1,4 @@
-# Architecture logicielle de `livraison_express_lite`
+# Architecture logicielle de `livraison-express-lite`
 
 > **Objectif**
 >
@@ -8,7 +8,7 @@
 
 ## 1. Résumé en une minute
 
-`livraison_express_lite` prédit si une commande peut bénéficier d'une livraison express. Une commande est décrite par des variables numériques et catégorielles : distance, poids, météo, zone de livraison, capacité du transporteur, etc.
+`livraison-express-lite` prédit si une commande peut bénéficier d'une livraison express. Une commande est décrite par des variables numériques et catégorielles : distance, poids, météo, zone de livraison, capacité du transporteur, etc.
 
 | Usage | Entrée | Résultat | Point d'entrée |
 |---|---|---|---|
@@ -36,17 +36,17 @@ Le dépôt contient un répertoire Python :
 
 ```text
 src/
-└── livraison_express_lite/   # version corrigée minimale du projet
+└── app/                      # version corrigée minimale du projet
 ```
 
-Ce document décrit  `src/livraison_express_lite/`.
+Ce document décrit  `src/app/`.
 
 ---
 
 ## 3. Arborescence
 
 ```text
-src/livraison_express_lite/
+src/app/
 ├── __init__.py
 ├── __main__.py                  # point d'entrée python -m
 ├── cli.py                       # serve, train, predict

@@ -1,9 +1,9 @@
 """Interface en ligne de commande : le point d'entrée non HTTP.
 
 ```bash
-python -m livraison_express serve                      # démarre l'API
-python -m livraison_express train                      # entraîne et sauvegarde le modèle
-python -m livraison_express predict --file order.json  # prédiction en local, sans serveur
+python -m src.app serve                      # démarre l'API
+python -m src.app train                      # entraîne et sauvegarde le modèle
+python -m src.app predict --file order.json  # prédiction en local, sans serveur
 ```
 
 Pourquoi une CLI en plus de l'API ? Parce que toutes les opérations d'un projet ML ne
@@ -28,9 +28,9 @@ import time
 import traceback
 from pathlib import Path
 
-from src.livraison_express_lite.domain.entities import OrderEntity
-from src.livraison_express_lite.core.learning.ml_trainer import MLTrainer
-from src.livraison_express_lite.infrastructure.order_repository import OrderRepository
+from src.app.domain.entities import OrderEntity
+from src.app.core.learning.ml_trainer import MLTrainer
+from src.app.infrastructure.order_repository import OrderRepository
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ def _predict(file_path: str) -> int:
     if predict_service is None:
         print(
             f"Modèle indisponible ({core.get_settings().model_path}) : "
-            "lancez `python -m livraison_express train` d'abord.",
+            "lancez `python -m src.app train` d'abord.",
             file=sys.stderr,
         )
         return 1
