@@ -26,13 +26,16 @@ COPY . .
 CMD ["python", "-m", "app", "serve", "--host", "0.0.0.0"]
 
 
-# ---------- test : l'image de prod + les tests ----------
+# ---------- test : environnement de validation des releases ----------
+# Strictement identique à prod : une branche release/<version> y est déployée et
+# vérifiée avant d'être fusionnée dans main et mise en production.
 FROM base AS test
 
-RUN pip install pytest
-COPY tests tests
+RUN useradd --create-home appuser
+USER appuser
 
-CMD ["pytest"]
+EXPOSE 8000
+CMD ["python", "-m", "app", "serve", "--host", "0.0.0.0"]
 
 
 # ---------- prod : le strict minimum ----------
