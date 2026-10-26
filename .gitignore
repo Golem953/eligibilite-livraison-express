@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Tests and tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Notebook and model artifacts (regenerate them by running the notebook)
+notebooks/artifacts/
+artifacts/
+*.joblib
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

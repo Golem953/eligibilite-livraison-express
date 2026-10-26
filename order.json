@@ -1,0 +1,14 @@
+{
+  "hour": 14,
+  "day_of_week": 2,
+  "weekend": 0,
+  "distance_km": 3.5,
+  "order_value_eur": 89.9,
+  "weight_kg": 2.4,
+  "stock_available": 1,
+  "preparation_time_min": 18,
+  "carrier_capacity": 0.85,
+  "weather": "normal",
+  "delivery_zone": "centre",
+  "customer_type": "premium"
+}

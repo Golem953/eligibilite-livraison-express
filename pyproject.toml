@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "livraison-express-lite"
+version = "0.1.0"
+description = "Prédiction d'éligibilité à la livraison express"
+readme = "README.md"
+requires-python = ">=3.13"
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+# The notebook is not ours: it is the historical artifact of the project, and it must
+# stay byte-for-byte identical to what the students received. Linting it is not an
+# option, and `F821 input_dataframe` (cell 62) is a known, documented error.
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+# Default selection (E4, E7, E9, F) plus import sorting: this is the minimum for
+# `ruff check .` to be meaningful. Extend it if you want, and write it down in
+# docs/decisions/ — a linter config is a decision, like any other.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# The skeletons of session 1 are intentionally incomplete: unused imports there are
+# the implementation guide. Remove this exception once your code is written.
+"src/livraison_express/domain/entities.py" = ["F401"]
+"src/livraison_express/domain/quality.py" = ["F401"]
