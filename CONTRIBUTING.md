@@ -89,6 +89,55 @@ Les versions suivent le [versionnage sémantique](https://semver.org/lang/fr/) `
 
 La version est dans `pyproject.toml` (`version`), et le tag Git correspondant est `v<version>`.
 
+## Images Docker
+
+Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flow a la sienne. Il n'y a pas encore de CI/CD : les images se construisent à la main, avec Docker Compose.
+
+Chaque environnement a son fichier de configuration `.env.<environnement>`, passé à Compose avec `--env-file`. La variable `APP_ENV` de ce fichier choisit l'étape du `Dockerfile` et le nom de l'image ; sans elle, c'est `dev`.
+
+| Moment | Branche | Fichier | `APP_ENV` | Image | Contenu |
+|---|---|---|---|---|---|
+| Développement sur son poste | `feat/*`, `dev` | `.env.dev` | `dev` | `livraison-express:dev` | Tout le dépôt, avec pytest et ruff |
+| Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `.env.test` | `test` | `livraison-express:test` | Identique à la prod : sert à valider la release |
+| Fusion dans `main` | `main` | `.env.prod` | `prod` | `livraison-express:prod` | Dépendances d'exécution et code uniquement |
+
+### En développement
+
+```powershell
+docker compose --env-file .env.dev up -d --build
+docker compose --env-file .env.dev run --rm train
+docker compose --env-file .env.dev restart api
+```
+
+### Pour valider une release
+
+Sur la branche `release/<version>` (ou `hotfix/<version>`), avec un fichier `.env.test` qui contient `APP_ENV=test` :
+
+```powershell
+docker compose --env-file .env.test up -d --build
+docker compose --env-file .env.test run --rm train
+docker compose --env-file .env.test restart api
+```
+
+La release n'est fusionnée dans `main` que si l'application fonctionne avec cette image.
+
+### Pour la production
+
+Sur `main`, après la fusion et le tag, avec un fichier `.env.prod` qui contient `APP_ENV=prod` :
+
+```powershell
+docker compose --env-file .env.prod up -d --build
+```
+
+Les étapes `test` et `prod` étant identiques, l'image validée en release est exactement celle qui part en production.
+
+### Règles pour les fichiers `.env.<environnement>`
+
+- Créez `.env.test` et `.env.prod` sur le modèle de `.env.dev`, sur la machine qui en a besoin.
+- Ne laissez aucune clé vide : l'application refuse une valeur vide pour un nombre.
+- Ces fichiers sont lus par Compose, pas par l'application. Ne mettez pas `APP_ENV` dans le fichier `.env` lu par l'application : elle refuse les clés qu'elle ne connaît pas.
+- Les fichiers `.env.*` sont exclus de git (sauf `.env.example`), car ceux de test et de prod contiendront des secrets.
+
 ## Commits
 
 Les messages suivent la convention [Conventional Commits](https://www.conventionalcommits.org/fr/) :
