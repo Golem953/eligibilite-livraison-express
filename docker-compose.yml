@@ -1,0 +1,87 @@
+# Pile de livraison-express-lite (ADR-0004).
+#
+#   docker compose --env-file .env.dev up -d --build    API + interface MLflow
+#   docker compose --env-file .env.dev run --rm train   entraîne le modèle
+#   docker compose --env-file .env.dev restart api      sert le nouveau modèle
+#
+# Chaque environnement a son fichier .env.<APP_ENV>. APP_ENV y choisit l'étape du
+# Dockerfile, selon la branche (voir CONTRIBUTING.md) :
+#   dev   (défaut) sur son poste, branches feat/* et dev   -> .env.dev
+#   test           branche release/<version>               -> .env.test
+#   prod           branche main                            -> .env.prod
+#
+# Une clé absente ou vide prend la valeur par défaut indiquée après « :- ».
+
+name: livraison-express
+
+# Réglages communs aux services qui exécutent l'application.
+x-app: &app
+  build:
+    context: .
+    target: ${APP_ENV:-dev}
+  image: livraison-express:${APP_ENV:-dev}
+  environment:
+    ENVIRONMENT: ${APP_ENV:-dev}
+    MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
+    MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
+    RANDOM_SEED: ${RANDOM_SEED:-42}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # Modèle et runs MLflow sur le volume partagé, pour qu'ils survivent aux conteneurs.
+    MODEL_PATH: /data/artifacts/express_delivery_model.joblib
+    MLFLOW_TRACKING_URI: /data/mlruns
+    MLFLOW_ALLOW_FILE_STORE: "true"
+  volumes:
+    - app_data:/data
+  depends_on:
+    init-volume:
+      condition: service_completed_successfully
+
+services:
+  # Un volume neuf appartient à root : on le donne à appuser (UID 1000) avant
+  # que l'API et l'entraînement, qui tournent sans les droits root, ne s'en servent.
+  init-volume:
+    image: busybox:1.36.1
+    user: root
+    entrypoint: ["chown", "-R", "1000:1000", "/data"]
+    volumes:
+      - app_data:/data
+    restart: "no"
+
+  api:
+    <<: *app
+    ports:
+      # Uniquement sur la machine, pas sur le réseau (ADR-0005).
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  # Lancé à la demande, puis s'arrête (ADR-0003) : docker compose run --rm train
+  train:
+    <<: *app
+    command: ["python", "-m", "app", "train"]
+    profiles: ["train"]
+    restart: "no"
+
+  # Interface web de MLflow, en lecture sur les runs de l'entraînement.
+  mlflow:
+    <<: *app
+    command:
+      - mlflow
+      - ui
+      - --backend-store-uri
+      - /data/mlruns
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+    ports:
+      - "127.0.0.1:${MLFLOW_PORT:-5000}:5000"
+    restart: unless-stopped
+
+volumes:
+  app_data:
