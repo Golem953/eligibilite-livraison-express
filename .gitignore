@@ -21,6 +21,9 @@ notebooks/artifacts/
 artifacts/
 *.joblib
 
+# MLflow runs (local file store)
+mlruns/
+
 # Editors and OS
 .idea/
 .vscode/
