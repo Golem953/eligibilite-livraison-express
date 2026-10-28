@@ -6,10 +6,7 @@ n'est écrit en dur dans le code métier. Les valeurs sont lues depuis l'environ
 ou depuis un fichier `.env` (voir `.env.example`), dans cet ordre de priorité.
 """
 
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-import logging
 
 
 class Settings(BaseSettings):

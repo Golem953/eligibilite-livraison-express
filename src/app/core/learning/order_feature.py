@@ -4,7 +4,6 @@ import pandas as pd
 
 from ...domain.entities import OrderEntity
 
-
 TARGET_COLUMN = "express_eligible"
 
 # Les identifiants et les dates brutes ne sont pas utilisés directement

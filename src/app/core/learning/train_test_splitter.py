@@ -1,5 +1,5 @@
-from collections.abc import Sequence
 import logging
+from collections.abc import Sequence
 
 from sklearn.model_selection import train_test_split
 

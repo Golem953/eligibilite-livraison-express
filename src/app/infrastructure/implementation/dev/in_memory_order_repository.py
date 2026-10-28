@@ -16,12 +16,12 @@ C'est très bien pour un test unitaire, **inacceptable** en production.
 
 from __future__ import annotations
 
-from ...order_repository import OrderRepository
-from ....domain.entities import OrderEntity
-
-from .order_generator import generate_labeled_orders
-from ....config import Settings
 import logging
+
+from ....config import Settings
+from ....domain.entities import OrderEntity
+from ...order_repository import OrderRepository
+from .order_generator import generate_labeled_orders
 
 logger = logging.getLogger(__name__)
 

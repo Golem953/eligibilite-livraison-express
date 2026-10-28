@@ -1,16 +1,16 @@
-from collections.abc import Sequence
 import logging
 import time
+from collections.abc import Sequence
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import mlflow
 import mlflow.sklearn
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
+from ...config import Settings
 from ...domain.entities import OrderEntity
+from .ml_pipeline import MLPipeline
 from .order_feature import FEATURE_COLUMNS
 from .train_test_splitter import TrainTestSplitter
-from ...config import Settings
-from .ml_pipeline import MLPipeline
 
 logger = logging.getLogger(__name__)
 

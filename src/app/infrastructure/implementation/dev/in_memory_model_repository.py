@@ -22,8 +22,8 @@ from pathlib import Path
 
 import joblib
 
-from ...model_repository import ModelRepository
 from ....domain.entities import ModelEntity
+from ...model_repository import ModelRepository
 
 logger = logging.getLogger(__name__)
 

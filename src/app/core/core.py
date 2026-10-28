@@ -15,18 +15,18 @@ Conséquence : `api/` n'importent **jamais** la couche des implémentations.
 Changer de base de données, c'est modifier ce fichier, et un seul test.
 Principe SOLID.
 """
-from .learning.ml_pipeline import MLPipeline
-from .learning.ml_predict import MLPredict
-from .learning.ml_trainer import MLTrainer
-from ..infrastructure.order_repository import OrderRepository
-from ..infrastructure.model_repository import ModelRepository
+import logging
+from datetime import datetime, timezone
+
 from ..config import Settings
 from ..domain.entities import ModelEntity
 from ..infrastructure.implementation.dev.in_memory_model_repository import FileModelRepository
 from ..infrastructure.implementation.dev.in_memory_order_repository import InMemoryOrderRepository
-
-import logging
-from datetime import datetime, timezone
+from ..infrastructure.model_repository import ModelRepository
+from ..infrastructure.order_repository import OrderRepository
+from .learning.ml_pipeline import MLPipeline
+from .learning.ml_predict import MLPredict
+from .learning.ml_trainer import MLTrainer
 
 logger = logging.getLogger(__name__)
 

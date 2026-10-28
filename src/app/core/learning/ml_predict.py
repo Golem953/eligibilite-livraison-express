@@ -4,6 +4,7 @@ from ...config import Settings
 from ...domain.entities import OrderEntity, PredictionEntity
 from .order_feature import orders_to_dataframe
 
+
 class MLPredict:
     """
     Effectue une prédiction pour une commande.
