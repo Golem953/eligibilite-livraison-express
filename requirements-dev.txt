@@ -1,0 +1,8 @@
+# Développement : pip install -r requirements-dev.txt
+-r requirements.txt
+pytest==9.1.1
+# Client HTTP de fastapi.testclient, pour les tests de l'API.
+httpx2==2.13.1
+ruff==0.16.10
+# MLflow complet (avec son serveur) pour `mlflow ui` en local ; l'application n'utilise que mlflow-skinny.
+mlflow==3.17.2

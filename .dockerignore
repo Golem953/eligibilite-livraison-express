@@ -1,0 +1,25 @@
+# Fichiers exclus du contexte de build : ils ne sont copiés dans aucune image, même par `COPY . .`.
+
+# Secrets et configuration locale
+.env
+.env.*
+
+# Git, environnements et caches
+.git/
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Données, modèles et runs MLflow
+notebooks/
+artifacts/
+*.joblib
+mlruns/
+mlflow.db
+
+# Éditeurs
+.idea/
+.vscode/
