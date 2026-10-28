@@ -14,12 +14,28 @@
 
 name: livraison-express
 
+# Durcissement appliqué à tous les services : système de fichiers en lecture seule
+# (seuls le volume et /tmp sont modifiables), aucune capacité Linux, aucune
+# élévation de privilèges possible (sudo, setuid).
+x-hardening: &hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
 # Réglages communs aux services qui exécutent l'application.
 x-app: &app
+  <<: *hardening
   build:
     context: .
     target: ${APP_ENV:-dev}
   image: livraison-express:${APP_ENV:-dev}
+  # Même utilisateur que appuser, y compris avec l'image dev (qui n'en définit pas) :
+  # sans capacités, root ne pourrait pas écrire dans le volume qui appartient à l'UID 1000.
+  user: "1000:1000"
   environment:
     ENVIRONMENT: ${APP_ENV:-dev}
     MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
@@ -30,6 +46,8 @@ x-app: &app
     MODEL_PATH: /data/artifacts/express_delivery_model.joblib
     MLFLOW_TRACKING_URI: /data/mlruns
     MLFLOW_ALLOW_FILE_STORE: "true"
+    # appuser n'a pas de dossier personnel : les fichiers temporaires vont dans /tmp.
+    HOME: /tmp
   volumes:
     - app_data:/data
   depends_on:
@@ -40,8 +58,12 @@ services:
   # Un volume neuf appartient à root : on le donne à appuser (UID 1000) avant
   # que l'API et l'entraînement, qui tournent sans les droits root, ne s'en servent.
   init-volume:
+    <<: *hardening
     image: busybox:1.36.1
     user: root
+    # Seule capacité nécessaire : changer le propriétaire des fichiers.
+    cap_add:
+      - CHOWN
     entrypoint: ["chown", "-R", "1000:1000", "/data"]
     volumes:
       - app_data:/data
@@ -67,9 +89,14 @@ services:
     profiles: ["train"]
     restart: "no"
 
-  # Interface web de MLflow, en lecture sur les runs de l'entraînement.
+  # Interface web de MLflow sur les runs de l'entraînement.
+  # Image officielle : l'image de l'application ne contient que mlflow-skinny, sans serveur.
+  # Le volume reste en écriture : au démarrage, MLflow crée /data/mlruns/models.
   mlflow:
-    <<: *app
+    <<: *hardening
+    image: ghcr.io/mlflow/mlflow:v3.17.2@sha256:2cc40b3208991940d824d04f339833a0b69507569012aa5ec545690608602fc0
+    # L'image officielle tourne en root par défaut.
+    user: "1000:1000"
     command:
       - mlflow
       - ui
@@ -79,8 +106,16 @@ services:
       - 0.0.0.0
       - --port
       - "5000"
+    environment:
+      MLFLOW_ALLOW_FILE_STORE: "true"
+      HOME: /tmp
+    volumes:
+      - app_data:/data
     ports:
       - "127.0.0.1:${MLFLOW_PORT:-5000}:5000"
+    depends_on:
+      init-volume:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
