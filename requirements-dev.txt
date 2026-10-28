@@ -2,3 +2,5 @@
 -r requirements.txt
 pytest==9.1.1
 ruff==0.16.10
+# MLflow complet (avec son serveur) pour `mlflow ui` en local ; l'application n'utilise que mlflow-skinny.
+mlflow==3.17.2
