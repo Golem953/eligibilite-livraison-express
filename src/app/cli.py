@@ -28,9 +28,7 @@ import time
 import traceback
 from pathlib import Path
 
-from src.app.domain.entities import OrderEntity
-from src.app.core.learning.ml_trainer import MLTrainer
-from src.app.infrastructure.order_repository import OrderRepository
+from .domain.entities import OrderEntity
 
 logger = logging.getLogger(__name__)
 

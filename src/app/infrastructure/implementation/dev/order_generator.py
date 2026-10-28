@@ -27,7 +27,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.app.domain.entities import OrderEntity
+from ....domain.entities import OrderEntity
 
 
 def generate_labeled_orders(
