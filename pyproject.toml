@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "livraison-express-lite"
-version = "0.1.0"
+version = "0.1.1"
 description = "Prédiction d'éligibilité à la livraison express"
 readme = "README.md"
 requires-python = ">=3.13"
