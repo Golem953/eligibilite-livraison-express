@@ -12,11 +12,12 @@ En participant, vous vous engagez à respecter le [code de conduite](CODE_OF_CON
 
 ## Préparer son environnement
 
-Suivez la section « Installation » du [README](README.md), puis installez le linter :
+Suivez la section « Installation » du [README](README.md) : `requirements-dev.txt` installe aussi pytest, ruff et le MLflow complet.
 
-```powershell
-pip install ruff
-```
+**Ajouter ou mettre à jour une dépendance :**
+
+- outil de développement (test, lint…) : ajoutez-le à `requirements-dev.txt`, avec sa version ;
+- dépendance de l'application : ajoutez-la à la liste des dépendances directes en tête de `requirements.txt`, puis régénérez le fichier avec la commande indiquée au même endroit. Il est généré dans l'image de base Linux, pour que les versions figées soient exactement celles installées dans les images Docker.
 
 ## Branches (Git Flow)
 

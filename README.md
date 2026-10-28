@@ -28,10 +28,13 @@ cd eligibilite-livraison-express
 
 python -m venv .venv
 .venv\Scripts\activate               # Linux / macOS : source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
-`requirements.txt` a été figé sous Windows : il contient `pywin32`, qu'il faut retirer pour installer le projet sous Linux ou macOS.
+| Fichier | Contenu | Usage |
+|---|---|---|
+| `requirements.txt` | Ce dont l'application a besoin pour tourner, versions figées | Images Docker `test` et `prod` |
+| `requirements-dev.txt` | `requirements.txt` + pytest, ruff et le MLflow complet (pour `mlflow ui`) | Poste de développement, image `dev` |
 
 ## Configuration
 
@@ -61,7 +64,7 @@ Sous Linux / macOS : `export MLFLOW_TRACKING_URI=./mlruns MLFLOW_ALLOW_FILE_STOR
 - Sans `MLFLOW_TRACKING_URI`, MLflow crée une base SQLite `mlflow.db` dans le dossier courant.
 - Sans `MLFLOW_ALLOW_FILE_STORE=true`, MLflow refuse le stockage dans `mlruns/`.
 
-Pour consulter les runs dans le navigateur :
+Pour consulter les runs dans le navigateur (MLflow complet, installé par `requirements-dev.txt`) :
 
 ```powershell
 mlflow ui --backend-store-uri ./mlruns
@@ -172,14 +175,74 @@ order.json                   exemple de commande
 
 ## Qualité du code
 
-Le linter [Ruff](https://docs.astral.sh/ruff/) est configuré dans `pyproject.toml` :
+Le linter [Ruff](https://docs.astral.sh/ruff/) est configuré dans `pyproject.toml`, et installé par `requirements-dev.txt` :
 
 ```powershell
-pip install ruff
 ruff check .
 ```
 
 Le projet n'a pas encore de tests automatisés.
+
+## Image Docker : optimisation et sécurité
+
+Les commandes de lancement par environnement sont dans [CONTRIBUTING.md](CONTRIBUTING.md#images-docker).
+
+### Optimisation
+
+| Mesure | Effet |
+|---|---|
+| Image de base `python:3.13-slim` | Debian minimale, sans compilateurs ni outils superflus |
+| Build multi-étapes (`dev`, `test`, `prod`) | Les images `test` et `prod` ne contiennent ni les tests, ni les outils de développement, ni la documentation |
+| `requirements.txt` limité à ce que le code importe | 55 paquets au lieu de 94 : `mlflow-skinny` remplace le MLflow complet (sans serveur Flask, `pyarrow`, `matplotlib`, `sqlalchemy`…) |
+| Dépendances installées avant la copie du code | Une modification du code ne relance pas `pip install`, qui reste en cache |
+| `PIP_NO_CACHE_DIR`, `PYTHONDONTWRITEBYTECODE` | Ni cache pip, ni fichiers `.pyc` dans l'image |
+| `.dockerignore` | `.git`, `.venv`, notebooks, modèles et secrets n'entrent pas dans le contexte de build |
+
+Image `prod` mesurée avant et après la réduction des dépendances :
+
+| | Avant | Après |
+|---|---|---|
+| Taille sur disque | 1,26 Go | 790 Mo (−37 %) |
+| Taille compressée (téléchargée depuis un registre) | 272 Mo | 168 Mo (−38 %) |
+| Paquets Python | 94 | 55 |
+
+L'essentiel de ce qui reste vient de `scipy`, `pandas`, `scikit-learn` et `numpy`, indispensables au modèle.
+
+### Sécurité
+
+**Dans l'image (`Dockerfile`) :**
+
+- **Utilisateur non-root** `appuser` (UID 1000, sans dossier personnel ni shell de connexion) dans `test` et `prod`.
+- **Code en lecture seule pour l'application** : il est copié par root, avant le passage à `appuser`.
+- **pip retiré** des images `test` et `prod` : il n'y sert plus, et embarque ses propres copies vulnérables d'`urllib3` et `msgpack`.
+- **Image de base figée** par version exacte et empreinte (`python:3.13.18-slim@sha256:…`) : deux builds produisent la même image.
+- **Aucun secret** : `.env` est exclu par `.dockerignore`, aucun mot de passe dans `ENV`.
+
+**Au lancement (`docker-compose.yml`), pour tous les services :**
+
+- **Système de fichiers en lecture seule** (`read_only`) : seuls le volume `/data` et `/tmp` sont modifiables.
+- **Aucune capacité Linux** (`cap_drop: ALL`) ; `init-volume` ne récupère que `CHOWN`.
+- **Pas d'élévation de privilèges** (`no-new-privileges`).
+- **Ports publiés uniquement sur `127.0.0.1`**.
+- **MLflow lancé avec l'UID 1000**, alors que son image officielle tourne en root par défaut.
+
+**Analyse des vulnérabilités** avec [Trivy](https://trivy.dev/), image `prod` :
+
+| | Avant | Après |
+|---|---|---|
+| Paquets Python | 8 (dont 5 HIGH) | 0 |
+| Paquets Debian de l'image de base | 164 (dont 44 HIGH) | 164 (dont 44 HIGH) |
+| CRITICAL | 0 | 0 |
+
+Les vulnérabilités restantes concernent des paquets Debian (`util-linux`, `systemd`, `ncurses`, `perl`) pour lesquels aucun correctif n'est encore publié. Elles disparaîtront en mettant à jour la version figée de l'image de base quand Debian les corrigera.
+
+Pour relancer l'analyse :
+
+```powershell
+docker build --target prod -t livraison-express:prod .
+docker image save livraison-express:prod -o image.tar
+docker run --rm -v "${PWD}:/scan" aquasec/trivy:0.58.1 image --input /scan/image.tar --scanners vuln --severity HIGH,CRITICAL
+```
 
 ## Contribuer
 
