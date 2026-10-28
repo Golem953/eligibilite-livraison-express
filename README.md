@@ -171,17 +171,32 @@ src/app/
 └── infrastructure/          abstractions de stockage et implémentations de dev
 notebooks/                   notebook d'exploration d'origine
 order.json                   exemple de commande
+tests/                       tests pytest
+.github/workflows/           CI (ci.yml) et CD (cd.yml)
 ```
 
 ## Qualité du code
 
-Le linter [Ruff](https://docs.astral.sh/ruff/) est configuré dans `pyproject.toml`, et installé par `requirements-dev.txt` :
+Le linter [Ruff](https://docs.astral.sh/ruff/) et les tests [pytest](https://docs.pytest.org/) sont installés par `requirements-dev.txt` :
 
 ```powershell
 ruff check .
+pytest
 ```
 
-Le projet n'a pas encore de tests automatisés.
+| Tests | Ce qu'ils vérifient |
+|---|---|
+| `test_order_feature.py` | Le contrat des variables du modèle : mêmes colonnes, même ordre, `order_id` exclu |
+| `test_order_generator.py` | Le générateur de données : reproductible, labels binaires, identifiants uniques |
+| `test_ml_predict.py` | La décision selon le seuil, l'arrondi de la probabilité, la version et l'horodatage |
+| `test_api.py` | Les routes, les statuts 200/503/422 et le contrat de réponse de `/predict` |
+| `test_training.py` | Un entraînement complet, la qualité minimale du modèle et la sauvegarde puis le rechargement |
+
+Les tests de l'API et de la prédiction utilisent un modèle factice : ils sont rapides et ne dépendent pas de l'entraînement.
+
+## CI/CD
+
+GitHub Actions lance la CI (Ruff, pytest, build de l'image) à chaque push et pull request sur `dev`. La fusion d'une release dans `main` publie l'image de production sur GitHub Container Registry, sans la déployer. Le détail est dans [CONTRIBUTING.md](CONTRIBUTING.md#cicd).
 
 ## Image Docker : optimisation et sécurité
 

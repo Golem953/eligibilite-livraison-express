@@ -53,18 +53,11 @@ git push -u origin feat/mon-sujet     # puis pull request vers dev
 git switch dev
 git pull
 git switch -c release/0.2.0
-# version dans pyproject.toml, documentation, derniers correctifs
+# version = "0.2.0" dans pyproject.toml, documentation, derniers correctifs
 git push -u origin release/0.2.0      # puis pull request vers main
 ```
 
-Une fois la pull request fusionnée dans `main` :
-
-```powershell
-git switch main
-git pull
-git tag -a v0.2.0 -m "Version 0.2.0"
-git push origin v0.2.0
-```
+Une fois la pull request fusionnée dans `main`, la CD (voir « CI/CD » ci-dessous) publie l'image `0.2.0` et pose le tag Git `v0.2.0`. Il n'y a rien à faire à la main.
 
 Fusionnez ensuite `release/0.2.0` dans `dev` (pull request), pour que les derniers correctifs y soient aussi, puis supprimez la branche.
 
@@ -78,7 +71,7 @@ git switch -c hotfix/0.1.1
 git push -u origin hotfix/0.1.1       # puis pull request vers main
 ```
 
-Après la fusion dans `main`, posez le tag `v0.1.1` comme pour une version, fusionnez `hotfix/0.1.1` dans `dev`, puis supprimez la branche.
+Après la fusion dans `main`, la CD publie l'image et pose le tag `v0.1.1`, comme pour une version. Fusionnez ensuite `hotfix/0.1.1` dans `dev`, puis supprimez la branche.
 
 ### Numéros de version
 
@@ -88,11 +81,35 @@ Les versions suivent le [versionnage sémantique](https://semver.org/lang/fr/) `
 - **mineur** (`0.1.1` → `0.2.0`) : nouvelle fonctionnalité compatible avec l'existant ;
 - **majeur** (`0.2.0` → `1.0.0`) : changement incompatible, par exemple une modification du contrat de l'API ou des variables du modèle.
 
-La version est dans `pyproject.toml` (`version`), et le tag Git correspondant est `v<version>`.
+La version est dans `pyproject.toml` (`version`), et le tag Git correspondant est `v<version>`. Elle doit être augmentée dans la branche `release/` ou `hotfix/` : si le tag existe déjà, la CD refuse de publier.
+
+## CI/CD
+
+Deux workflows GitHub Actions, dans `.github/workflows/` :
+
+| Workflow | Déclenchement | Étapes |
+|---|---|---|
+| `ci.yml` (CI) | push et pull request sur `dev` | Ruff, pytest, build de l'image `prod` (sans publication) |
+| `cd.yml` (CD) | push sur `main`, c'est-à-dire la fusion d'une `release/` ou d'un `hotfix/` | La CI complète, puis publication de l'image sur GitHub Container Registry et tag Git `v<version>` |
+
+La CD ne déploie rien : elle publie seulement l'image `ghcr.io/golem953/eligibilite-livraison-express`, avec quatre étiquettes :
+
+| Étiquette | Exemple | Usage |
+|---|---|---|
+| `<version>` | `0.1.1` | Version exacte, à utiliser pour déployer |
+| `<majeur>.<mineur>` | `0.1` | Dernier correctif de la version mineure |
+| `latest` | `latest` | Dernière version publiée |
+| `sha-<commit>` | `sha-3f2a9c1` | Commit exact qui a produit l'image |
+
+```powershell
+docker pull ghcr.io/golem953/eligibilite-livraison-express:0.1.1
+```
+
+Au premier envoi, le paquet est privé sur GitHub : pour le rendre public, *Packages → eligibilite-livraison-express → Package settings → Change visibility*.
 
 ## Images Docker
 
-Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flow a la sienne. Il n'y a pas encore de CI/CD : les images se construisent à la main, avec Docker Compose.
+Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flow a la sienne. Pour travailler et valider une release, les images se construisent avec Docker Compose ; l'image de production, elle, est publiée par la CD (voir « CI/CD »).
 
 Chaque environnement a son fichier de configuration `.env.<environnement>`, passé à Compose avec `--env-file`. La variable `APP_ENV` de ce fichier choisit l'étape du `Dockerfile` et le nom de l'image ; sans elle, c'est `dev`.
 
@@ -176,14 +193,13 @@ Un commit = un changement cohérent. Ne mélangez pas une correction et un refor
 
 ## Tests
 
-Le projet n'a pas encore de tests automatisés. Toute nouvelle fonctionnalité ou correction doit être accompagnée de tests [pytest](https://docs.pytest.org/) dans un dossier `tests/` à la racine.
+Les tests [pytest](https://docs.pytest.org/) sont dans `tests/`. Ils importent le package sous le nom `app`, comme dans les images Docker (`pythonpath = ["src"]` dans `pyproject.toml`). Toute nouvelle fonctionnalité ou correction doit être accompagnée de tests.
 
-Avant d'ouvrir une pull request, vérifiez au minimum :
+Avant d'ouvrir une pull request, lancez ce que la CI vérifiera :
 
 ```powershell
 ruff check .
-python -m src.app train
-python -m src.app predict --file order.json
+pytest
 ```
 
 ## Pull requests
