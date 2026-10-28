@@ -1,0 +1,80 @@
+# Intégration continue : lint, tests et build de l'image Docker.
+#
+# Se lance à chaque push et pull request sur dev, et sert aussi d'étape de
+# vérification à la CD (cd.yml), qui l'appelle avant de publier une image.
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_call:
+
+permissions:
+  contents: read
+
+# Un nouveau push annule l'exécution en cours sur la même branche.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  lint:
+    name: Lint (Ruff)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # Même version de Ruff que sur les postes de dev, lue dans requirements-dev.txt.
+      - name: Installer Ruff
+        run: pip install "$(grep '^ruff==' requirements-dev.txt)"
+
+      - name: Ruff
+        run: ruff check --output-format=github .
+
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Installer les dépendances
+        run: pip install -r requirements-dev.txt
+
+      - name: pytest
+        run: pytest -v
+
+  docker:
+    name: Build de l'image prod
+    runs-on: ubuntu-24.04
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Vérifie seulement que l'image se construit : rien n'est publié ici.
+      - name: Construire l'image prod
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: prod
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
