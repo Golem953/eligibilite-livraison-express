@@ -1,14 +1,17 @@
 # Intégration continue : lint, tests et build de l'image Docker.
 #
-# Se lance à chaque push et pull request sur dev, et sert aussi d'étape de
-# vérification à la CD (cd.yml), qui l'appelle avant de publier une image.
+# Se lance sur toutes les branches entre dev et main (Git Flow) :
+#   - à chaque push sur dev, release/* et hotfix/* ;
+#   - à chaque pull request vers dev ou vers main.
+# Elle sert aussi d'étape de vérification à la CD (cd.yml), qui l'appelle avant
+# de publier une image.
 name: CI
 
 on:
   push:
-    branches: [dev]
+    branches: [dev, "release/**", "hotfix/**"]
   pull_request:
-    branches: [dev]
+    branches: [dev, main]
   workflow_call:
 
 permissions:

@@ -196,7 +196,7 @@ Les tests de l'API et de la prédiction utilisent un modèle factice : ils sont 
 
 ## CI/CD
 
-GitHub Actions lance la CI (Ruff, pytest, build de l'image) à chaque push et pull request sur `dev`. La fusion d'une release dans `main` publie l'image de production sur GitHub Container Registry, sans la déployer. Le détail est dans [CONTRIBUTING.md](CONTRIBUTING.md#cicd).
+GitHub Actions lance la CI (Ruff, pytest, build de l'image) sur toutes les branches entre `dev` et `main` : à chaque push sur `dev`, `release/*` et `hotfix/*`, et à chaque pull request vers `dev` ou `main`. La fusion d'une release dans `main` publie l'image de production sur GitHub Container Registry, sans la déployer. Le détail est dans [CONTRIBUTING.md](CONTRIBUTING.md#cicd).
 
 ## Image Docker : optimisation et sécurité
 

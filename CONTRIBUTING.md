@@ -89,7 +89,7 @@ Deux workflows GitHub Actions, dans `.github/workflows/` :
 
 | Workflow | Déclenchement | Étapes |
 |---|---|---|
-| `ci.yml` (CI) | push et pull request sur `dev` | Ruff, pytest, build de l'image `prod` (sans publication) |
+| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff, pytest, build de l'image `prod` (sans publication) |
 | `cd.yml` (CD) | push sur `main`, c'est-à-dire la fusion d'une `release/` ou d'un `hotfix/` | La CI complète, puis publication de l'image sur GitHub Container Registry et tag Git `v<version>` |
 
 La CD ne déploie rien : elle publie seulement l'image `ghcr.io/golem953/eligibilite-livraison-express`, avec quatre étiquettes :
