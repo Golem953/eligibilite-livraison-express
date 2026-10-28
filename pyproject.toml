@@ -19,6 +19,11 @@ where = ["src"]
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
 
+[tool.pytest.ini_options]
+# Les tests importent le package sous le nom `app`, comme dans les images Docker.
+pythonpath = ["src"]
+testpaths = ["tests"]
+
 [tool.ruff]
 target-version = "py313"
 line-length = 100
