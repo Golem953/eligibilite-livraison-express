@@ -1,41 +1,29 @@
 from datetime import datetime, timezone
 
-from ...config import Settings
 from ...domain.entities import OrderEntity, PredictionEntity
 from .order_feature import orders_to_dataframe
 
 
 class MLPredict:
-    """
-    Effectue une prédiction pour une commande.
+    """Transforme la probabilité du modèle en décision d'éligibilité.
 
     Parameters
     ----------
-    model : Pipeline
+    model_pipeline : Pipeline
         Pipeline scikit-learn entraînée.
     threshold : float
         Seuil à partir duquel la commande est considérée comme éligible.
+    model_version : str
+        Version du modèle, renvoyée avec chaque prédiction.
     """
-    def __init__(self, model_pipeline, threshold: float | None = None):
-        settings = Settings()
-        self.threshold = settings.model_threshold if threshold is None else threshold
-        self.model_version = settings.model_version
+
+    def __init__(self, model_pipeline, threshold: float, model_version: str):
         self.model_pipeline = model_pipeline
+        self.threshold = threshold
+        self.model_version = model_version
 
     def predict(self, order: OrderEntity) -> PredictionEntity:
-        """
-    Effectue une prédiction pour une commande.
-
-    Parameters
-    ----------
-        order : OrderEntity
-        Commande à prédire.
-
-    Returns
-    -------
-    dict
-        Résultat de la prédiction.
-    """
+        """Prédit l'éligibilité d'une commande."""
         input_df = orders_to_dataframe([order])
 
         probability = float(self.model_pipeline.predict_proba(input_df)[0, 1])

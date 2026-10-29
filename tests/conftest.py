@@ -5,8 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.core.core import Core
+from app.config import Settings
 from app.domain.entities import OrderEntity
+from app.domain.ports import ExperimentTracker
 
 
 class FakeModel:
@@ -19,10 +20,26 @@ class FakeModel:
         return np.array([[1 - self.probability, self.probability]] * len(features))
 
 
+class FakeTracker(ExperimentTracker):
+    """Tracker factice : garde en mémoire ce qu'on lui envoie, sans MLflow."""
+
+    def __init__(self):
+        self.runs: list[dict] = []
+
+    def log_run(self, run_name, params, metrics, model) -> str:
+        self.runs.append({"run_name": run_name, "params": params, "metrics": metrics})
+        return f"run-{len(self.runs)}"
+
+
 @pytest.fixture
 def fake_model():
     """Fabrique de modèles factices : fake_model(0.8) prédit toujours 0,8."""
     return FakeModel
+
+
+@pytest.fixture
+def fake_tracker() -> FakeTracker:
+    return FakeTracker()
 
 
 @pytest.fixture
@@ -46,13 +63,8 @@ def order() -> OrderEntity:
 
 
 @pytest.fixture
-def isolated_env(tmp_path, monkeypatch):
-    """Modèle et runs MLflow dans un dossier temporaire, et singleton Core remis à zéro.
-
-    Sans cette remise à zéro, `Core` garderait la configuration du test précédent.
-    """
-    monkeypatch.setenv("MODEL_PATH", str(tmp_path / "artifacts" / "model.joblib"))
+def settings(tmp_path, monkeypatch) -> Settings:
+    """Configuration isolée : modèle et runs MLflow dans un dossier temporaire."""
     monkeypatch.setenv("MLFLOW_TRACKING_URI", str(tmp_path / "mlruns"))
     monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
-    monkeypatch.setattr(Core, "_instance", None)
-    return tmp_path
+    return Settings(model_path=str(tmp_path / "artifacts" / "model.joblib"))

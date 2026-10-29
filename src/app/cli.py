@@ -28,6 +28,8 @@ import traceback
 from dataclasses import asdict
 from pathlib import Path
 
+from .config import Settings
+from .core.core import configure_logging
 from .domain.entities import OrderEntity
 
 logger = logging.getLogger(__name__)
@@ -69,12 +71,15 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = build_parser().parse_args(argv)
     try:
+        # La configuration est lue une seule fois, ici, puis transmise.
+        settings = Settings()
+        configure_logging(settings)
         if args.command == "serve":
-            return _serve(args)
+            return _serve(args, settings)
         if args.command == "train":
-            return _train()
+            return _train(settings)
         if args.command == "predict":
-            return _predict(args.file)
+            return _predict(args.file, settings)
     except KeyboardInterrupt:
         print("Interrompu.", file=sys.stderr)
         return 1
@@ -84,40 +89,38 @@ def main(argv: list[str] | None = None) -> int:
     return 1  # Si aucune condition n'est réunie, on retourne un échec.
 
 
-def _serve(args: argparse.Namespace) -> int:
+def _serve(args: argparse.Namespace, settings: Settings) -> int:
     """On lance l'API sur le port 8000 par défaut."""
     import uvicorn
 
     from .api.app import create_app
 
-    uvicorn.run(create_app(), host=args.host, port=args.port)
+    uvicorn.run(create_app(settings), host=args.host, port=args.port)
     return 0
 
 
-def _train() -> int:
+def _train(settings: Settings) -> int:
     """Entrainement du modèle de machine learning."""
-    from .core.core import Core
+    from .core.core import build_training_service
 
     started_at = time.perf_counter()
-    core = Core()
     logger.info("Début de l'entraînement du modèle")
-    core.train_model()
+    build_training_service(settings).run()
     logger.info("Entraînement terminé avec succès en %.2f s", time.perf_counter() - started_at)
     return 0
 
 
-def _predict(file_path: str) -> int:
+def _predict(file_path: str, settings: Settings) -> int:
     """Charger le modèle persisté puis prédire une commande JSON."""
-    from .core.core import Core
+    from .core.core import build_prediction_service
 
     payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
     order = OrderEntity(**payload)
-    core = Core(load_model=True)
-    predict_service = core.get_predict_service()
+    predict_service = build_prediction_service(settings)
 
     if predict_service is None:
         print(
-            f"Modèle indisponible ({core.get_settings().model_path}) : "
+            f"Modèle indisponible ({settings.model_path}) : "
             "lancez `python -m src.app train` d'abord.",
             file=sys.stderr,
         )

@@ -15,25 +15,22 @@ class Settings(BaseSettings):
     Les noms de champs correspondent aux clés de `.env.example`. Avec
     `SettingsConfigDict(env_file=".env")`, pydantic lit les variables d'environnement
     en priorité sur le fichier `.env`.
+
+    Elle est créée une seule fois par point d'entrée, puis passée aux classes qui en
+    ont besoin : aucune classe métier ne lit la configuration elle-même.
     """
 
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_file_encoding="utf-8"
+        env_file_encoding="utf-8",
     )
 
     # Graine aléatoire
     random_seed: int = 42
-    # local | test | prod
-    environment: str = "local"
     # Chemin du .joblib écrit par la cellule 41 du notebook.
     model_path: str = "notebooks/artifacts/express_delivery_model.joblib"
-    # URI MLflow du modèle à charger (ex. runs:/<run_id>/model).
-    mlflow_model_uri: str = ""
     # Seuil de décision qui transforme une probabilité en oui/non (cellule 31).
     model_threshold: float = 0.5
-    # Chaîne de connexion de l'implémentation d'OrderRepository retenue (ADR-0001).
-    order_repository_url: str = "memory://"
     # DEBUG | INFO | WARNING | ERROR
     log_level: str = "INFO"
     # Version du modèle servi (provisoire, voir ADR-0002).

@@ -4,14 +4,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from ...config import Settings
 from .order_feature import CATEGORICAL_FEATURES, NUMERIC_FEATURES
 
 
 class MLPipeline:
-    def __init__(self, random_seed: int | None = None):
-        if random_seed is None:
-            random_seed = Settings().random_seed
+    def __init__(self, random_seed: int):
         self.random_seed = random_seed
 
     def get_model_pipeline(self):
