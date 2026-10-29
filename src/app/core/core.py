@@ -4,7 +4,8 @@ Chaque point d'entrée assemble uniquement ce dont il a besoin, à partir d'une
 configuration reçue en paramètre :
 
 - `build_prediction_service` pour l'API et la commande `predict` ;
-- `build_training_service` pour la commande `train`.
+- `build_training_service` pour la commande `train`, avec la source des commandes
+  choisie par `build_order_repository`.
 
 Les deux sont indépendants (ADR-0003) : l'API n'importe ni MLflow ni le code
 d'entraînement. Changer d'implémentation (PostgreSQL, registre MLflow...) se fait
@@ -16,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from ..config import Settings
+from ..domain.interface.order_repository_interface import OrderRepositoryInterface
 from ..infrastructure.repository.file_model_repository import FileModelRepository
 from .learning.ml_predict import MLPredict
 
@@ -46,27 +48,42 @@ def build_prediction_service(settings: Settings) -> MLPredict | None:
     )
 
 
+def build_order_repository(settings: Settings) -> OrderRepositoryInterface:
+    """Choisit la source des commandes selon `TRAINING_SOURCE_URL` (ADR-0009)."""
+    url = settings.training_source_url
+    if url == "memory://":
+        from ..infrastructure.implementation.dev.order_generator import generate_labeled_orders
+        from ..infrastructure.repository.in_memory_order_repository import (
+            InMemoryOrderRepository,
+        )
+
+        repository = InMemoryOrderRepository()
+        for order, label in zip(*generate_labeled_orders(random_state=settings.random_seed)):
+            repository.save(order, label)
+        return repository
+    if url.startswith(("mongodb://", "mongodb+srv://")):
+        from ..infrastructure.repository.mongo_order_repository import MongoOrderRepository
+
+        return MongoOrderRepository.from_url(url)
+    raise ValueError("TRAINING_SOURCE_URL doit commencer par memory:// ou mongodb://")
+
+
 def build_training_service(settings: Settings):
-    """Assemble l'entraînement : données synthétiques, pipeline, MLflow, fichier modèle."""
+    """Assemble l'entraînement : source des commandes, pipeline, MLflow, fichier modèle."""
     # Imports locaux : seul l'entraînement en a besoin, l'API ne les charge jamais.
-    from ..infrastructure.implementation.dev.order_generator import generate_labeled_orders
     from ..infrastructure.implementation.mlflow_tracker import MlflowTracker
-    from ..infrastructure.repository.in_memory_order_repository import (
-        InMemoryOrderRepository,
-    )
     from .learning.ml_pipeline import MLPipeline
     from .learning.ml_trainer import MLTrainer
     from .learning.train_test_splitter import TrainTestSplitter
     from .training_service import TrainingService
 
-    orders, labels = generate_labeled_orders(random_state=settings.random_seed)
     trainer = MLTrainer(
         MLPipeline(random_seed=settings.random_seed).get_model_pipeline(),
         TrainTestSplitter(random_seed=settings.random_seed),
         MlflowTracker(EXPERIMENT_NAME),
     )
     return TrainingService(
-        order_repository=InMemoryOrderRepository(orders, labels),
+        order_repository=build_order_repository(settings),
         trainer=trainer,
         model_repository=FileModelRepository(settings.model_path),
         model_version=settings.model_version,

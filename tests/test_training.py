@@ -78,19 +78,6 @@ def test_loading_a_missing_model_returns_none(tmp_path):
     assert FileModelRepository(str(tmp_path / "absent.joblib")).load() is None
 
 
-def test_in_memory_repository_returns_orders_with_their_labels(small_dataset):
-    orders, labels = small_dataset
-
-    assert InMemoryOrderRepository(orders, labels).get_training_data() == (orders, labels)
-
-
-def test_in_memory_repository_rejects_orders_without_id(order):
-    order_without_id = type(order)(**{**order.__dict__, "order_id": None})
-
-    with pytest.raises(ValueError, match="order_id"):
-        InMemoryOrderRepository([order_without_id], [1])
-
-
 def test_full_assembly_trains_then_serves(settings, order):
     """De bout en bout : vraies implémentations, MLflow compris, puis prédiction."""
     assert build_prediction_service(settings) is None

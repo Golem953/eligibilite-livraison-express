@@ -37,3 +37,6 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     # Version du modèle servi (provisoire, voir ADR-0002).
     model_version: str = "1.0.0"
+    # Source des commandes de l'entraînement (ADR-0009) : `memory://` (données
+    # synthétiques) ou `mongodb://hôte:27017/livraison_express` (commandes de l'ERP).
+    training_source_url: str = "memory://"

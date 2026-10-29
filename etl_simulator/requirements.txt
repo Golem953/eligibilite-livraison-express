@@ -1,0 +1,3 @@
+# ETL simulé (dev uniquement) : seule dépendance directe, pymongo.
+dnspython==2.9.0
+pymongo==4.15.3
