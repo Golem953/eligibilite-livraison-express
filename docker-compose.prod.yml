@@ -1,0 +1,122 @@
+# Environnement de production.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm train
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod restart api
+#
+# Rien n'est construit ici : l'image est celle que la CD a publiée sur ghcr.io,
+# dans la version APP_VERSION (voir CONTRIBUTING.md, « CI/CD »).
+#
+# La base est le MongoDB de l'ERP (ADR-0009). C'est un service externe, sur une
+# autre machine : ce compose ne le lance pas et ne partage aucun réseau Docker avec
+# lui. `train` s'y connecte par son adresse, donnée par TRAINING_SOURCE_URL, comme à
+# n'importe quel service distant. L'API ne s'y connecte jamais.
+#
+# Faute de serveur, l'ERP est simulé hors de ce dépôt (dossier erp_prod_test, à côté
+# du projet) et publie MongoDB sur le port 27017 de sa machine. Sur le même poste,
+# cette machine est `host.docker.internal` ; sur un autre poste, son adresse IP ou
+# son nom DNS.
+#
+# Modèle des variables : .env.prod.example.
+
+name: livraison-express-prod
+
+# Durcissement appliqué à tous les services : système de fichiers en lecture seule
+# (seuls le volume et /tmp sont modifiables), aucune capacité Linux, aucune
+# élévation de privilèges possible (sudo, setuid).
+x-hardening: &hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+# Réglages communs aux services qui exécutent l'application.
+x-app: &app
+  <<: *hardening
+  image: ghcr.io/golem953/eligibilite-livraison-express:${APP_VERSION:?APP_VERSION manquant (par exemple 0.2.0)}
+  user: "1000:1000"
+  environment:
+    MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
+    MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
+    RANDOM_SEED: ${RANDOM_SEED:-42}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    MODEL_PATH: /data/artifacts/express_delivery_model.joblib
+    MLFLOW_TRACKING_URI: /data/mlruns
+    MLFLOW_ALLOW_FILE_STORE: "true"
+    HOME: /tmp
+  volumes:
+    - app_data:/data
+  depends_on:
+    init-volume:
+      condition: service_completed_successfully
+
+services:
+  # Un volume neuf appartient à root : on le donne à appuser (UID 1000).
+  init-volume:
+    <<: *hardening
+    image: busybox:1.36.1
+    user: root
+    cap_add:
+      - CHOWN
+    entrypoint: ["chown", "-R", "1000:1000", "/data"]
+    volumes:
+      - app_data:/data
+    restart: "no"
+
+  api:
+    <<: *app
+    ports:
+      # Uniquement sur la machine : le reverse proxy expose l'API (ADR-0004, ADR-0005).
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  # Lancé à la demande, puis s'arrête (ADR-0003). Lit les commandes de l'ERP.
+  train:
+    <<: *app
+    command: ["python", "-m", "app", "train"]
+    profiles: ["train"]
+    environment:
+      MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
+      MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
+      RANDOM_SEED: ${RANDOM_SEED:-42}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Adresse du MongoDB de l'ERP, avec un compte en lecture seule (ADR-0009).
+      TRAINING_SOURCE_URL: ${TRAINING_SOURCE_URL:?TRAINING_SOURCE_URL manquant (MongoDB de l'ERP)}
+      MODEL_PATH: /data/artifacts/express_delivery_model.joblib
+      MLFLOW_TRACKING_URI: /data/mlruns
+      MLFLOW_ALLOW_FILE_STORE: "true"
+      HOME: /tmp
+    # Rend host.docker.internal disponible aussi sous Linux (Docker Desktop le fournit déjà).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: "no"
+
+  mlflow:
+    <<: *hardening
+    image: ghcr.io/mlflow/mlflow:v3.17.2@sha256:2cc40b3208991940d824d04f339833a0b69507569012aa5ec545690608602fc0
+    user: "1000:1000"
+    command: ["mlflow", "ui", "--backend-store-uri", "/data/mlruns", "--host", "0.0.0.0", "--port", "5000"]
+    environment:
+      MLFLOW_ALLOW_FILE_STORE: "true"
+      HOME: /tmp
+    volumes:
+      - app_data:/data
+    ports:
+      # Réservé à l'équipe, par tunnel SSH (ADR-0008).
+      - "127.0.0.1:${MLFLOW_PORT:-5000}:5000"
+    depends_on:
+      init-volume:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  app_data:

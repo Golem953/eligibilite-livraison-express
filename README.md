@@ -238,7 +238,7 @@ L'essentiel de ce qui reste vient de `scipy`, `pandas`, `scikit-learn` et `numpy
 - **Image de base figée** par version exacte et empreinte (`python:3.13.18-slim@sha256:…`) : deux builds produisent la même image.
 - **Aucun secret** : `.env` est exclu par `.dockerignore`, aucun mot de passe dans `ENV`.
 
-**Au lancement (`docker-compose.yml`), pour tous les services :**
+**Au lancement (`docker-compose.yml`, `docker-compose.test.yml`, `docker-compose.prod.yml`), pour tous les services :**
 
 - **Système de fichiers en lecture seule** (`read_only`) : seuls le volume `/data` et `/tmp` sont modifiables.
 - **Aucune capacité Linux** (`cap_drop: ALL`) ; `init-volume` ne récupère que `CHOWN`.

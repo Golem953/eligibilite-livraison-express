@@ -1,14 +1,13 @@
-# Pile de livraison-express-lite (ADR-0004).
+# Environnement de développement de livraison-express-lite (ADR-0004).
 #
 #   docker compose --env-file .env.dev up -d --build    API + interface MLflow
 #   docker compose --env-file .env.dev run --rm train   entraîne le modèle
 #   docker compose --env-file .env.dev restart api      sert le nouveau modèle
 #
-# Chaque environnement a son fichier .env.<APP_ENV>. APP_ENV y choisit l'étape du
-# Dockerfile, selon la branche (voir CONTRIBUTING.md) :
-#   dev   (défaut) sur son poste, branches feat/* et dev   -> .env.dev
-#   test           branche release/<version>               -> .env.test
-#   prod           branche main                            -> .env.prod
+# Chaque environnement a son compose et son fichier de variables (voir CONTRIBUTING.md) :
+#   dev   sur son poste, branches feat/* et dev   -> docker-compose.yml       + .env.dev
+#   test  branche release/<version>               -> docker-compose.test.yml  + .env.test
+#   prod  branche main                            -> docker-compose.prod.yml  + .env.prod
 #
 # Une clé absente ou vide prend la valeur par défaut indiquée après « :- ».
 
@@ -132,7 +131,7 @@ services:
       - mongo_dev_data:/data/db
       - mongo_dev_config:/data/configdb
     ports:
-      # 27018 : le port 27017 reste libre pour le MongoDB d'erp_prod_test.
+      # 27018 : le port 27017 reste libre pour le MongoDB de l'ERP simulé.
       - "127.0.0.1:${MONGO_PORT:-27018}:27017"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]

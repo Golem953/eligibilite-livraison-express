@@ -607,7 +607,7 @@ En dev, les commandes sont en mémoire (ADR-0001) : l'option A ne concerne que l
 
 ### Contexte
 
-L'entraînement utilise aujourd'hui des commandes synthétiques générées en mémoire (ADR-0001). Pour s'entraîner sur des commandes réelles, il doit lire celles de l'ERP de l'entreprise, qui les écrit dans deux bases. Le dossier `erp_prod_test/` simule cet ERP et alimente les deux bases.
+L'entraînement utilise aujourd'hui des commandes synthétiques générées en mémoire (ADR-0001). Pour s'entraîner sur des commandes réelles, il doit lire celles de l'ERP de l'entreprise, qui les écrit dans deux bases. Faute de serveur, cet ERP est simulé par le dossier `erp_prod_test`, **hors de ce dépôt** : il tourne dans ses propres conteneurs, comme s'il était sur une autre machine, et l'application le joint par le réseau.
 
 **L'entraînement ne se fait qu'avec les données de l'ERP.** Un ETL met à jour les bases de l'ERP avec les commandes et leur label (la livraison express était-elle possible ?). Les commandes reçues par notre API ne servent pas à l'entraînement.
 
@@ -623,7 +623,7 @@ Ce que disent les développeurs de l'ERP :
 | Maintenance | Plus mise à jour depuis 2023 : l'administrateur a démissionné et n'a pas été remplacé | Maintenue par un alternant dont le contrat se termine bientôt |
 | Autres usages | Utilisée aussi par une autre application critique pour l'entreprise | Aucun, hors analyse |
 
-Ce que montre le simulateur (`erp_prod_test/`) :
+Ce que montre l'ERP simulé (`erp_prod_test`) :
 
 - les commandes depuis 2023 sont les **mêmes dans les deux bases**, avec le même identifiant (`ERP-00011001`). Le flux courant est écrit dans les deux bases ;
 - dans PostgreSQL, `weekend` vaut `NULL` avant le 1er juillet 2015 et `preparation_time_min` vaut `NULL` avant le 1er juillet 2017. Ces deux variables sont des entrées du modèle (`OrderEntity`) ;
@@ -677,12 +677,12 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 | Prod | MongoDB de l'ERP, compte en lecture seule | L'ETL de l'ERP |
 
 - **Le MongoDB et l'ETL de dev** sont deux services du profil `etl` de `docker-compose.yml` (`docker compose --env-file .env.dev --profile etl up -d --build`). Ils n'existent pas en prod.
-- **L'ETL simulé n'utilise pas `erp_prod_test/`** : ce dossier joue l'ERP de prod, faute de serveur, et l'application n'a pas à en dépendre. L'ETL simulé écrit directement ce que le vrai ETL chargerait : des commandes au format de l'ERP (`clear`, `suburb`, `business`…), avec un label calculé par une règle métier simulée.
+- **L'ETL simulé n'utilise pas l'ERP simulé** : `erp_prod_test` joue l'ERP de prod, hors du dépôt, et l'application n'en dépend pas. En prod, `train` joint son MongoDB par son adresse réseau (`TRAINING_SOURCE_URL`), sans réseau Docker partagé : remplacer l'ERP simulé par un vrai serveur ne demande que de changer cette URL. L'ETL simulé écrit directement ce que le vrai ETL chargerait : des commandes au format de l'ERP (`clear`, `suburb`, `business`…), avec un label calculé par une règle métier simulée.
 - **Le générateur `memory://` n'a pas les mêmes valeurs que l'ERP** (`normal`, `banlieue`, `premium`…) : un modèle entraîné en `memory://` ne dit rien de son comportement sur les données de l'ERP. Pour tester comme en prod, on passe par le MongoDB de dev.
 
 ### Conséquences
 
-- **Implémentation** : `MongoOrderRepository` dans `infrastructure/repository/mongo_order_repository.py`. Elle implémente le même contrat que `InMemoryOrderRepository` (`save`, `get`, `get_training_data`). Dépendance `pymongo`, déjà utilisée par le simulateur (`erp_prod_test/requirements-databases.txt`).
+- **Implémentation** : `MongoOrderRepository` dans `infrastructure/repository/mongo_order_repository.py`. Elle implémente le même contrat que `InMemoryOrderRepository` (`save`, `get`, `get_training_data`). Dépendance `pymongo`, dans la même version que l'ERP simulé.
 - **`save` réservé au dev et à la CI** : il sert à alimenter une base MongoDB de test. En prod, le compte de l'entraînement est en lecture seule et MongoDB refuse l'écriture : seul l'ETL écrit dans la base de l'ERP.
 - **Choix par configuration** : la variable `TRAINING_SOURCE_URL` (`memory://` ou `mongodb://hôte:27017/livraison_express`) choisit l'implémentation dans la racine de composition `core/core.py` (`build_order_repository`). En dev, la source reste en mémoire.
 - **Validation à la lecture** : MongoDB n'impose aucun schéma. Chaque document est converti en `OrderEntity` : un champ absent, `null` ou de mauvais type écarte le document, compté dans les logs, jamais utilisé en silence. Les documents sans label (`express_eligible`) ne servent pas à l'entraînement.
@@ -698,7 +698,7 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 
 ### Points restant ouverts
 
-- **L'ETL de l'ERP écrit-il le label ?** Le MongoDB de l'ERP (`erp_prod_test/`) ne contient aujourd'hui aucun label : sans lui, l'entraînement en prod reçoit 0 commande. Il faut savoir où le SI connaît le résultat réel des livraisons, et qui écrit l'ETL s'il n'existe pas.
+- **L'ETL de l'ERP écrit-il le label ?** Le MongoDB de l'ERP (simulé par `erp_prod_test`) ne contient aujourd'hui aucun label : sans lui, l'entraînement en prod reçoit 0 commande. Il faut savoir où le SI connaît le résultat réel des livraisons, et qui écrit l'ETL s'il n'existe pas.
 - **Nom du champ du label** : `express_eligible` est supposé, comme la cible du modèle et l'ETL simulé. À confirmer avec l'ERP, sinon changer `LABEL_FIELD` dans `mongo_order_repository.py`.
 - **Taille du jeu de test** de la comparaison (nombre de semaines les plus récentes) et **écart minimal** pour qu'un score soit jugé meilleur.
 - **Récupérer l'historique 2015-2022** si les métriques montrent qu'il manque des données : un export ponctuel en lecture seule depuis PostgreSQL, en heures creuses, vers MongoDB. Il faut pour cela retrouver quelqu'un qui a les droits sur PostgreSQL.

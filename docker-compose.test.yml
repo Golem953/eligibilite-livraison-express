@@ -1,0 +1,155 @@
+# Environnement de test : valider une release avant sa mise en production.
+#
+#   docker compose -f docker-compose.test.yml --env-file .env.test up -d --build
+#   docker compose -f docker-compose.test.yml --env-file .env.test run --rm train
+#   docker compose -f docker-compose.test.yml --env-file .env.test restart api
+#
+# Sur une branche release/<version> ou hotfix/<version> (voir CONTRIBUTING.md).
+# L'image de l'application est construite avec l'étape `test` du Dockerfile, identique
+# à `prod`. La base est un MongoDB de test, configuré comme celui de la prod :
+# authentification activée et un compte par usage (ADR-0008, ADR-0009). L'ETL simulé
+# l'alimente à la place de l'ETL de l'ERP, au format de l'ERP.
+#
+# Modèle des variables : .env.test.example. Les mots de passe n'ont pas de valeur par
+# défaut : sans eux, Compose refuse de démarrer.
+
+name: livraison-express-test
+
+# Durcissement appliqué à tous les services : système de fichiers en lecture seule
+# (seuls les volumes et /tmp sont modifiables), aucune capacité Linux, aucune
+# élévation de privilèges possible (sudo, setuid).
+x-hardening: &hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+# Réglages communs aux services qui exécutent l'application.
+x-app: &app
+  <<: *hardening
+  build:
+    context: .
+    target: test
+  image: livraison-express:test
+  user: "1000:1000"
+  environment:
+    MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
+    MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
+    RANDOM_SEED: ${RANDOM_SEED:-42}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # Compte en lecture seule : l'entraînement ne peut rien écrire dans MongoDB.
+    TRAINING_SOURCE_URL: mongodb://training_reader:${MONGO_TRAINING_PASSWORD:?MONGO_TRAINING_PASSWORD manquant}@mongodb:27017/livraison_express
+    MODEL_PATH: /data/artifacts/express_delivery_model.joblib
+    MLFLOW_TRACKING_URI: /data/mlruns
+    MLFLOW_ALLOW_FILE_STORE: "true"
+    HOME: /tmp
+  volumes:
+    - app_data:/data
+  depends_on:
+    init-volume:
+      condition: service_completed_successfully
+
+services:
+  # Un volume neuf appartient à root : on le donne à appuser (UID 1000).
+  init-volume:
+    <<: *hardening
+    image: busybox:1.36.1
+    user: root
+    cap_add:
+      - CHOWN
+    entrypoint: ["chown", "-R", "1000:1000", "/data"]
+    volumes:
+      - app_data:/data
+    restart: "no"
+
+  api:
+    <<: *app
+    ports:
+      # 8001 : le port 8000 reste libre pour l'environnement de dev.
+      - "127.0.0.1:${API_PORT:-8001}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  # Lancé à la demande, puis s'arrête (ADR-0003).
+  train:
+    <<: *app
+    command: ["python", "-m", "app", "train"]
+    profiles: ["train"]
+    depends_on:
+      init-volume:
+        condition: service_completed_successfully
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+
+  mlflow:
+    <<: *hardening
+    image: ghcr.io/mlflow/mlflow:v3.17.2@sha256:2cc40b3208991940d824d04f339833a0b69507569012aa5ec545690608602fc0
+    user: "1000:1000"
+    command: ["mlflow", "ui", "--backend-store-uri", "/data/mlruns", "--host", "0.0.0.0", "--port", "5000"]
+    environment:
+      MLFLOW_ALLOW_FILE_STORE: "true"
+      HOME: /tmp
+    volumes:
+      - app_data:/data
+    ports:
+      - "127.0.0.1:${MLFLOW_PORT:-5001}:5000"
+    depends_on:
+      init-volume:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Base choisie par l'ADR-0009, configurée comme en prod. Aucun port publié :
+  # seuls les services de ce compose y accèdent.
+  mongodb:
+    <<: *hardening
+    image: mongo:8.3.13@sha256:e16e606f792ea89d2b4907b54e5e31eb86a7a23e27231dce3a982cc8f2d73cd2
+    user: "999:999"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD manquant}
+      MONGO_INITDB_DATABASE: livraison_express
+      # Lus par le script d'initialisation, qui crée les comptes de chaque usage.
+      MONGO_TRAINING_PASSWORD: ${MONGO_TRAINING_PASSWORD:?MONGO_TRAINING_PASSWORD manquant}
+      MONGO_ETL_PASSWORD: ${MONGO_ETL_PASSWORD:?MONGO_ETL_PASSWORD manquant}
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+      - ./docker/mongo/init-users.js:/docker-entrypoint-initdb.d/init-users.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Remplace l'ETL de l'ERP : charge des commandes labellisées au format de l'ERP.
+  etl-simulator:
+    <<: *hardening
+    build:
+      context: ./etl_simulator
+    image: livraison-express-etl-simulator:test
+    environment:
+      MONGO_URI: mongodb://etl_writer:${MONGO_ETL_PASSWORD:?MONGO_ETL_PASSWORD manquant}@mongodb:27017/livraison_express
+      HISTORY_ORDERS: ${ETL_HISTORY_ORDERS:-3000}
+      BATCH_SIZE: ${ETL_BATCH_SIZE:-5}
+      INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-5}
+      LIVE_ORDER_LIMIT: ${ETL_LIVE_ORDER_LIMIT:-0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  app_data:
+  mongo_data:
+  mongo_config:

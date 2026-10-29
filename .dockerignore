@@ -20,8 +20,7 @@ artifacts/
 mlruns/
 mlflow.db
 
-# Systèmes simulés (ERP, ETL) : ils ne font pas partie de l'application
-erp_prod_test/
+# ETL simulé : il ne fait pas partie de l'application
 etl_simulator/
 
 # Éditeurs
