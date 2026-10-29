@@ -7,25 +7,34 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from ..core.core import Core
-from ..domain.entities import OrderEntity, PredictionEntity
+from ..config import Settings
+from ..core.core import build_prediction_service
+from ..core.learning.ml_predict import MLPredict
+from ..domain.entities.order_entity import OrderEntity
+from ..domain.entities.prediction_entity import PredictionEntity
 
 logger = logging.getLogger(__name__)
 
 
-def create_app() -> FastAPI:
-    """Créer l'API et charger le modèle persistant si disponible."""
+def create_app(
+    settings: Settings | None = None,
+    predict_service: MLPredict | None = None,
+) -> FastAPI:
+    """Créer l'API.
+
+    Sans `predict_service`, le modèle enregistré est chargé une seule fois, ici. Les
+    tests peuvent en fournir un directement, sans fichier ni configuration.
+    """
     api = FastAPI(title="Livraison Express Lite")
 
-    try:
-        api.state.core = Core(load_model=True)
-        api.state.predict_service = api.state.core.get_predict_service()
-        if api.state.predict_service is None:
-            logger.warning("API démarrée sans modèle chargé")
-    except Exception:
-        logger.exception("Impossible de charger le modèle au démarrage de l'API")
-        api.state.core = None
-        api.state.predict_service = None
+    if predict_service is None:
+        try:
+            predict_service = build_prediction_service(settings or Settings())
+        except Exception:
+            logger.exception("Impossible de charger le modèle au démarrage de l'API")
+    if predict_service is None:
+        logger.warning("API démarrée sans modèle chargé")
+    api.state.predict_service = predict_service
 
     @api.get("/health")
     def health() -> dict[str, str]:
@@ -49,6 +58,3 @@ def create_app() -> FastAPI:
         return predict_service.predict(payload)
 
     return api
-
-
-app = create_app()

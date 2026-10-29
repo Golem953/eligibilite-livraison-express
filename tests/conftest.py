@@ -2,27 +2,23 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
+from fakes.fake_model import FakeModel
+from fakes.fake_tracker import FakeTracker
 
-from app.core.core import Core
-from app.domain.entities import OrderEntity
-
-
-class FakeModel:
-    """Modèle factice : renvoie toujours la même probabilité, sans entraînement."""
-
-    def __init__(self, probability: float):
-        self.probability = probability
-
-    def predict_proba(self, features):
-        return np.array([[1 - self.probability, self.probability]] * len(features))
+from app.config import Settings
+from app.domain.entities.order_entity import OrderEntity
 
 
 @pytest.fixture
 def fake_model():
     """Fabrique de modèles factices : fake_model(0.8) prédit toujours 0,8."""
     return FakeModel
+
+
+@pytest.fixture
+def fake_tracker() -> FakeTracker:
+    return FakeTracker()
 
 
 @pytest.fixture
@@ -46,13 +42,8 @@ def order() -> OrderEntity:
 
 
 @pytest.fixture
-def isolated_env(tmp_path, monkeypatch):
-    """Modèle et runs MLflow dans un dossier temporaire, et singleton Core remis à zéro.
-
-    Sans cette remise à zéro, `Core` garderait la configuration du test précédent.
-    """
-    monkeypatch.setenv("MODEL_PATH", str(tmp_path / "artifacts" / "model.joblib"))
+def settings(tmp_path, monkeypatch) -> Settings:
+    """Configuration isolée : modèle et runs MLflow dans un dossier temporaire."""
     monkeypatch.setenv("MLFLOW_TRACKING_URI", str(tmp_path / "mlruns"))
     monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
-    monkeypatch.setattr(Core, "_instance", None)
-    return tmp_path
+    return Settings(model_path=str(tmp_path / "artifacts" / "model.joblib"))

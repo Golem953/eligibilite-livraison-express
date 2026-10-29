@@ -15,6 +15,7 @@ htmlcov/
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 # Notebook and model artifacts (regenerate them by running the notebook)
 notebooks/artifacts/

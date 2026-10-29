@@ -111,13 +111,13 @@ Au premier envoi, le paquet est privé sur GitHub : pour le rendre public, *Pack
 
 Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flow a la sienne. Pour travailler et valider une release, les images se construisent avec Docker Compose ; l'image de production, elle, est publiée par la CD (voir « CI/CD »).
 
-Chaque environnement a son fichier de configuration `.env.<environnement>`, passé à Compose avec `--env-file`. La variable `APP_ENV` de ce fichier choisit l'étape du `Dockerfile` et le nom de l'image ; sans elle, c'est `dev`.
+Chaque environnement a son fichier Compose et son fichier de variables `.env.<environnement>`, passé à Compose avec `--env-file`.
 
-| Moment | Branche | Fichier | `APP_ENV` | Image | Contenu |
+| Moment | Branche | Compose | Variables | Image | Base MongoDB (ADR-0009) |
 |---|---|---|---|---|---|
-| Développement sur son poste | `feat/*`, `dev` | `.env.dev` | `dev` | `livraison-express:dev` | Tout le dépôt, avec pytest et ruff |
-| Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `.env.test` | `test` | `livraison-express:test` | Identique à la prod : sert à valider la release |
-| Fusion dans `main` | `main` | `.env.prod` | `prod` | `livraison-express:prod` | Dépendances d'exécution et code uniquement |
+| Développement sur son poste | `feat/*`, `dev` | `docker-compose.yml` | `.env.dev` | `livraison-express:dev`, construite : tout le dépôt, avec pytest et ruff | Aucune par défaut (`memory://`) ; MongoDB et ETL simulés avec le profil `etl` |
+| Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `docker-compose.test.yml` | `.env.test` | `livraison-express:test`, construite : identique à la prod | MongoDB de test, avec authentification, alimenté par l'ETL simulé |
+| Fusion dans `main` | `main` | `docker-compose.prod.yml` | `.env.prod` | `ghcr.io/golem953/eligibilite-livraison-express:<version>`, publiée par la CD | MongoDB de l'ERP, service externe joint par son adresse, lu en lecture seule |
 
 ### En développement
 
@@ -129,32 +129,60 @@ docker compose --env-file .env.dev restart api
 
 ### Pour valider une release
 
-Sur la branche `release/<version>` (ou `hotfix/<version>`), avec un fichier `.env.test` qui contient `APP_ENV=test` :
+Sur la branche `release/<version>` (ou `hotfix/<version>`), avec un fichier `.env.test` copié depuis `.env.test.example` et ses mots de passe remplis :
 
 ```powershell
-docker compose --env-file .env.test up -d --build
-docker compose --env-file .env.test run --rm train
-docker compose --env-file .env.test restart api
+docker compose -f docker-compose.test.yml --env-file .env.test up -d --build
+docker compose -f docker-compose.test.yml --env-file .env.test run --rm train
+docker compose -f docker-compose.test.yml --env-file .env.test restart api
 ```
 
-La release n'est fusionnée dans `main` que si l'application fonctionne avec cette image.
+L'ETL simulé alimente le MongoDB de test au format de l'ERP. L'entraînement le lit avec le compte `training_reader`, en lecture seule, comme en prod. Les comptes sont créés par `docker/mongo/init-users.js` à la création du volume. La release n'est fusionnée dans `main` que si l'application fonctionne avec cette image.
 
 ### Pour la production
 
-Sur `main`, après la fusion et le tag, avec un fichier `.env.prod` qui contient `APP_ENV=prod` :
+Sur `main`, après la fusion et le tag, avec un fichier `.env.prod` copié depuis `.env.prod.example`. Rien n'est construit : `APP_VERSION` choisit l'image publiée par la CD.
 
 ```powershell
-docker compose --env-file .env.prod up -d --build
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm train
+docker compose -f docker-compose.prod.yml --env-file .env.prod restart api
 ```
+
+Le MongoDB de l'ERP est un service externe, sur une autre machine : `train` le joint par l'adresse de `TRAINING_SOURCE_URL`, sans réseau Docker partagé. L'API ne s'y connecte jamais.
+
+Faute de serveur, l'ERP est simulé par le dossier `erp_prod_test`, **hors de ce dépôt**, à côté du projet. Il se lance dans ses propres conteneurs et publie MongoDB sur un port de sa machine. Le port 27117 évite un éventuel MongoDB déjà installé sur le poste (service Windows sur 27017) :
+
+```powershell
+cd ..\erp_prod_test
+$env:MONGO_PORT = "27117"; docker compose -f docker-compose.erp.yml up -d --build
+```
+
+Sur le même poste, `TRAINING_SOURCE_URL=mongodb://host.docker.internal:27117/livraison_express`. Sur un autre poste, remplacer `host.docker.internal` par l'adresse IP de la machine de l'ERP.
 
 Les étapes `test` et `prod` étant identiques, l'image validée en release est exactement celle qui part en production.
 
+### Réentraînement automatique (Airflow)
+
+Sur la machine de prod, à côté de `docker-compose.prod.yml`, avec un fichier `.env.airflow` copié depuis `.env.airflow.example` et ses secrets remplis :
+
+```powershell
+docker compose -f docker-compose.airflow.yml --env-file .env.airflow up -d --build
+```
+
+Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0010).
+
+- Interface : <http://127.0.0.1:8080>, compte `admin` et mot de passe `AIRFLOW_ADMIN_PASSWORD`. Depuis un poste, par tunnel SSH.
+- Lancer un entraînement sans attendre la nuit : bouton *Trigger* du DAG, ou `docker compose -f docker-compose.airflow.yml --env-file .env.airflow exec airflow-scheduler airflow dags trigger retrain_express_model`.
+- Forcer un entraînement sous le seuil : remettre la variable Airflow `retrain_last_labeled_orders` à `0`, puis déclencher le DAG.
+- Pour une nouvelle version de l'application, mettre à jour `APP_VERSION` dans `.env.prod` **et** dans `.env.airflow`.
+
 ### Règles pour les fichiers `.env.<environnement>`
 
-- Créez `.env.test` et `.env.prod` sur le modèle de `.env.dev`, sur la machine qui en a besoin.
+- Créez `.env.test`, `.env.prod` et `.env.airflow` à partir de leurs modèles `.env.*.example`, sur la machine qui en a besoin.
 - Ne laissez aucune clé vide : l'application refuse une valeur vide pour un nombre.
 - Ces fichiers sont lus par Compose, pas par l'application. Ne mettez pas `APP_ENV` dans le fichier `.env` lu par l'application : elle refuse les clés qu'elle ne connaît pas.
-- Les fichiers `.env.*` sont exclus de git (sauf `.env.example`), car ceux de test et de prod contiendront des secrets.
+- Les fichiers `.env.*` sont exclus de git (sauf `.env.example` et les modèles `.env.*.example`), car ceux de test et de prod contiennent des secrets.
 
 ## Commits
 
@@ -185,7 +213,13 @@ Un commit = un changement cohérent. Ne mélangez pas une correction et un refor
 - **Respecter les couches** décrites dans [ARCHITECTURE-livraison-express-lite.md](ARCHITECTURE-livraison-express-lite.md) :
   - `domain/` ne dépend ni de FastAPI, ni de pandas, ni de MLflow ;
   - les classes concrètes (repositories, modèle) ne sont choisies que dans `core/core.py` ;
-  - l'API n'importe pas le code d'entraînement.
+  - l'API n'importe pas le code d'entraînement ;
+  - les classes reçoivent leur configuration et leurs dépendances en paramètre : seuls les points d'entrée créent `Settings`.
+- **Organisation des fichiers** :
+  - une classe par fichier, nommé d'après la classe (`OrderEntity` → `order_entity.py`) ;
+  - les interfaces (classes abstraites `ABC`) vont dans `domain/interface/`, et leur nom se termine par `Interface` (`OrderRepositoryInterface` → `order_repository_interface.py`) ;
+  - les implémentations de repositories vont dans `infrastructure/repository/`, les autres implémentations techniques dans `infrastructure/implementation/` ;
+  - une interface ne déclare que les méthodes que ses utilisateurs appellent.
 - **Les variables du modèle sont un contrat** : toute modification passe par `FEATURE_COLUMNS` dans `core/learning/order_feature.py`, et concerne à la fois l'entraînement et la prédiction.
 - **Aucun secret dans le code ni dans le dépôt.** La configuration passe par `config.py` et `.env`. Toute nouvelle variable est documentée dans `.env.example`.
 - **Ne pas modifier le notebook** `notebooks/project_test_v1_final_final2.ipynb` : c'est la trace de l'exploration d'origine.

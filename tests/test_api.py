@@ -1,6 +1,10 @@
 """API HTTP : statuts, contrat de réponse et validation des entrées."""
 
+import os
+import subprocess
+import sys
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,21 +14,38 @@ from app.core.learning.ml_predict import MLPredict
 
 
 @pytest.fixture
-def api(isolated_env):
+def client(settings):
     """API démarrée sans modèle : MODEL_PATH pointe vers un fichier qui n'existe pas."""
-    return create_app()
+    return TestClient(create_app(settings))
 
 
 @pytest.fixture
-def client(api):
-    return TestClient(api)
+def client_with_model(fake_model):
+    """API avec un modèle factice (probabilité 0,8), fourni sans fichier ni configuration."""
+    service = MLPredict(fake_model(0.8), threshold=0.5, model_version="test")
+    return TestClient(create_app(predict_service=service))
 
 
-@pytest.fixture
-def client_with_model(api, fake_model):
-    """API dont le modèle est remplacé par un modèle factice (probabilité 0,8)."""
-    api.state.predict_service = MLPredict(fake_model(0.8), threshold=0.5)
-    return TestClient(api)
+def test_api_does_not_import_training_code():
+    """ADR-0003 : l'API n'importe ni MLflow ni le code d'entraînement.
+
+    Lancé dans un processus séparé, car d'autres tests ont déjà importé MLflow.
+    """
+    code = (
+        "import sys, app.api.app; "
+        "loaded = [m for m in ('mlflow', 'app.core.learning.ml_trainer') if m in sys.modules]; "
+        "print(','.join(loaded))"
+    )
+    src = Path(__file__).resolve().parents[1] / "src"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={**os.environ, "PYTHONPATH": str(src)},
+    )
+
+    assert result.stdout.strip() == ""
 
 
 def test_health_is_always_ok(client):
