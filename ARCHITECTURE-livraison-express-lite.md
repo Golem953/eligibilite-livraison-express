@@ -317,7 +317,7 @@ Les interfaces de `domain/interface/` décrivent seulement les opérations dont 
 
 | Interface | Méthodes | Implémentation lite | Limite |
 |---|---|---|---|
-| `OrderRepositoryInterface` | `get_training_data()` | dictionnaire en mémoire | données perdues au redémarrage et non partagées |
+| `OrderRepositoryInterface` | `save()`, `get()`, `get_training_data()` | dictionnaire en mémoire ; collection MongoDB de l'ERP (ADR-0009) | en mémoire : données perdues au redémarrage et non partagées |
 | `ModelRepositoryInterface` | `save()`, `load()` | fichier local via Joblib | pas de registre complet ni de rollback |
 | `ExperimentTrackerInterface` | `log_run()` | MLflow | — |
 
@@ -328,17 +328,19 @@ flowchart TB
     MR[ModelRepositoryInterface<br/>interface]
     ET[ExperimentTrackerInterface<br/>interface]
     IM[InMemoryOrderRepository]
+    MO[MongoOrderRepository]
     FM[FileModelRepository]
     MT[MlflowTracker]
     APP --> OR
     APP --> MR
     APP --> ET
     OR -. implémente .-> IM
+    OR -. implémente .-> MO
     MR -. implémente .-> FM
     ET -. implémente .-> MT
 ```
 
-Remplacer le dictionnaire par PostgreSQL revient à écrire une nouvelle implémentation d'`OrderRepositoryInterface` et à la choisir dans `core.py`, sans toucher à `TrainingService`, `MLTrainer` ni `MLPredict`. Une méthode ne s'ajoute à une interface que lorsqu'un utilisateur en a besoin (YAGNI).
+Passer du dictionnaire aux commandes de l'ERP dans MongoDB revient à changer `TRAINING_SOURCE_URL` : `core.py` choisit l'implémentation d'`OrderRepositoryInterface`, sans toucher à `TrainingService`, `MLTrainer` ni `MLPredict`. Une méthode ne s'ajoute à une interface que lorsqu'un utilisateur en a besoin (YAGNI).
 
 ---
 
@@ -352,7 +354,9 @@ build_prediction_service(settings)        API et commande predict
   └─ MLPredict(modèle, seuil, version), ou None si aucun modèle
 
 build_training_service(settings)          commande train
-  ├─ InMemoryOrderRepository(données du générateur)
+  ├─ build_order_repository(settings)    selon TRAINING_SOURCE_URL
+  │    ├─ memory://   InMemoryOrderRepository, rempli par save() avec le générateur
+  │    └─ mongodb://  MongoOrderRepository (commandes de l'ERP)
   ├─ MLTrainer(pipeline, splitter, MlflowTracker)
   ├─ FileModelRepository
   └─ TrainingService

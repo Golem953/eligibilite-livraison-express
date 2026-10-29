@@ -11,7 +11,7 @@ Une commande est décrite par sa distance, son poids, son montant, la météo, l
 | Document | Contenu |
 |---|---|
 | [ARCHITECTURE-livraison-express-lite.md](ARCHITECTURE-livraison-express-lite.md) | Organisation du code, flux de données, pipeline ML, API |
-| [ADR.md](ADR.md) | Décisions d'architecture (stockage, MLflow, déploiement, sécurité) |
+| [ADR.md](ADR.md) | Décisions d'architecture (stockage, MLflow, déploiement, sécurité, source des données) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Branches, commits, revue de code |
 | [SECURITY.md](SECURITY.md) | Signaler une vulnérabilité |
 

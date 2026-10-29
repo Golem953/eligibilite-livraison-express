@@ -11,14 +11,15 @@ L'API expose `POST /predict` : elle reçoit une commande, renvoie une prédictio
 
 Le seul stockage de commandes est `InMemoryOrderRepository`, un dictionnaire Python rempli au démarrage de l'entraînement avec les données du générateur synthétique. La commande `train` s'entraîne sur ces données générées. Elles disparaissent à l'arrêt du processus et ne sont pas partagées entre l'API et `train`, qui tournent dans deux processus distincts.
 
-L'interface `OrderRepositoryInterface` (`domain/interface/`) ne déclare que ce dont l'entraînement a besoin : `get_training_data()`. L'implémentation est choisie dans la racine de composition `core/core.py`.
+L'interface `OrderRepositoryInterface` (`domain/interface/`) déclare les opérations de base `save` et `get`, et `get_training_data()` pour l'entraînement. L'implémentation est choisie dans la racine de composition `core/core.py`.
 
 Ce que le stockage doit permettre :
 
 - **Écrire une ligne à chaque appel de l'API.** Les écritures sont fréquentes et unitaires. Elles peuvent être concurrentes si l'API tourne avec plusieurs workers.
 - **Conserver la prédiction et la version du modèle** qui l'a produite (`PredictionEntity.model_version`), pour l'audit et le monitoring.
-- **Compléter la commande plus tard avec le résultat réel** (la livraison express était-elle vraiment possible ?). Sans ce label, la commande ne sert pas au réentraînement. Il faut donc pouvoir **mettre à jour** ou **joindre** des données après coup.
-- **Extraire un jeu d'entraînement** (commandes labellisées sur une période donnée) que l'entraînement charge dans pandas via `orders_to_dataframe()`.
+- **Retrouver une prédiction** à partir de la commande, pour l'audit et pour comparer les versions pendant un canary (ADR-0006) : il faut pouvoir **joindre** commandes et prédictions.
+
+Le réentraînement ne passe pas par cette base : il utilise uniquement les commandes labellisées de l'ERP, mises à jour par un ETL (ADR-0009). Les commandes reçues par l'API n'ont donc pas besoin d'être complétées après coup avec leur résultat réel.
 
 ### Options considérées
 
@@ -34,7 +35,7 @@ Ce que le stockage doit permettre :
 **Option D : stockage en mémoire en développement, PostgreSQL en test (CI) et en production.**
 
 - **En dev, en mémoire** (`InMemoryOrderRepository`) : rien à installer, démarrage instantané. L'objectif est l'environnement de développement le plus rapide possible pour les futurs collaborateurs.
-- **En CI et en prod, PostgreSQL** : persistance, écritures concurrentes, données partagées entre l'API et l'entraînement, typage strict.
+- **En CI et en prod, PostgreSQL** : persistance, écritures concurrentes, données partagées entre les workers et les versions de l'API, typage strict.
 - **En contrepartie de l'absence de contraintes en mémoire**, la CI exécute les mêmes tests sur les deux implémentations, et les données sont validées avant d'atteindre le repository.
 - **Le métier ne dépend pas du moteur** : l'API, l'entraînement et le domaine ne connaissent que l'abstraction `OrderRepositoryInterface`. Seule l'implémentation PostgreSQL contient du SQL.
 
@@ -54,9 +55,9 @@ C'est acceptable en dev, car les données sont synthétiques et regénérées au
 ### Conséquences
 
 - **Choix de l'implémentation par configuration** : à l'arrivée de PostgreSQL, une variable `ORDER_REPOSITORY_URL` (`memory://` ou `postgresql://…`) s'ajoutera à `Settings`, et la racine de composition `core/core.py` choisira l'implémentation selon sa valeur. Ce choix ne se fait nulle part ailleurs.
-- **Contrat du repository** : `get_training_data()` fait partie de l'interface `OrderRepositoryInterface`. Les méthodes pour enregistrer une commande, sa prédiction et son label réel s'y ajouteront quand l'API les utilisera (YAGNI).
-- **Identifiant obligatoire à l'enregistrement** : `order_id` est facultatif dans `OrderEntity`, et `InMemoryOrderRepository.save()` range la commande sous la clé `order_id`. Toutes les commandes sans identifiant écrasent donc la même entrée (`None`). L'API doit générer un identifiant avant d'enregistrer, ou le repository doit refuser une commande sans identifiant.
-- **Cycle complet testé uniquement avec PostgreSQL** : en dev, `train` s'entraîne sur les données générées, jamais sur les prédictions reçues par l'API. La chaîne prédiction → label réel → réentraînement ne se vérifie qu'avec PostgreSQL, en CI ou avec `docker compose` (ADR-0004).
+- **Contrat du repository** : l'interface `OrderRepositoryInterface` déclare `save`, `get` et `get_training_data()`. L'enregistrement des prédictions s'y ajoutera quand l'API l'utilisera (YAGNI).
+- **Identifiant obligatoire à l'enregistrement** : `order_id` est facultatif dans `OrderEntity`, mais `save` refuse une commande sans identifiant (`ValueError`), dans toutes les implémentations. L'API doit donc générer un identifiant avant d'enregistrer.
+- **Enregistrement des prédictions testé uniquement avec PostgreSQL** : en dev, les prédictions ne sont pas conservées. Leur enregistrement ne se vérifie qu'avec PostgreSQL, en CI ou avec `docker compose` (ADR-0004).
 - **Un seul worker en dev** : l'API en mémoire tourne avec un seul worker uvicorn (déjà le cas avec `serve`), pour que toutes les requêtes voient les mêmes données.
 - **Contrôles portés par le code et le schéma, pas par le stockage en mémoire** : le dictionnaire accepte n'importe quelle valeur. Les données sont donc validées par l'API (ADR-0007) avant l'écriture, et le schéma PostgreSQL déclare explicitement ses contraintes (`NOT NULL`, `CHECK` sur les bornes et les valeurs énumérées, `UNIQUE` sur `order_id`, clés étrangères entre commandes et prédictions).
 - **Tests de contrat en CI** : une même suite de tests vérifie les deux implémentations (`InMemoryOrderRepository` et l'implémentation PostgreSQL, via un service container GitHub Actions). Elle couvre l'absence de doublon sur `order_id`, `get` qui renvoie `None` pour un identifiant inconnu, et le rejet des données invalides. Un test qui passe sur l'une et échoue sur l'autre bloque le pipeline.
@@ -68,8 +69,7 @@ C'est acceptable en dev, car les données sont synthétiques et regénérées au
 ### Points restant ouverts (sans impact sur le choix du moteur)
 
 - Quel **volume** de commandes viser (par jour, au total) ?
-- Comment et quand le **label réel** remonte-t-il (par l'API, par un import batch, par simulation) ?
-- Le **générateur de données synthétiques** remplit aujourd'hui le dépôt en mémoire au démarrage (`generated=True`). En CI et en prod, il devient un outil séparé qui alimente la base PostgreSQL de test.
+- Le **générateur de données synthétiques** remplit aujourd'hui le dépôt en mémoire au démarrage (`generated=True`). Pour tester avec MongoDB, c'est l'ETL simulé (`etl_simulator/`) qui alimente la base de test, à la place de l'ETL de l'ERP (ADR-0009).
 
 ---
 
@@ -373,28 +373,30 @@ Raisons :
 
 - **Aucun orchestrateur nécessaire** : le canary du modèle se règle dans l'API et par configuration, celui de l'image dans le reverse proxy. Cela convient à une seule machine.
 - **Dans un projet de Machine Learning, le risque principal est le modèle** : un modèle moins bon ne fait planter aucun service, il produit simplement de mauvaises prédictions. Le canary le détecte sur une petite part du trafic, avant qu'il ne touche toutes les commandes.
-- **La décision de promotion s'appuie sur des données réelles** : chaque prédiction est enregistrée avec la version du modèle qui l'a produite, ce qui permet de comparer le champion et le challenger sur le même trafic.
+- **La qualité est jugée avant le canary** : un nouveau modèle ne devient challenger que s'il a un meilleur score que le champion sur le même jeu de test, tiré des données de l'ERP (ADR-0009). Le canary vérifie ensuite, sur le vrai trafic, qu'il ne provoque ni erreurs ni lenteurs. Chaque prédiction est enregistrée avec la version du modèle qui l'a produite (ADR-0001).
 - **Retour arrière immédiat** : une seule valeur de configuration à changer, sans attendre un nouveau déploiement.
 
 ### Conséquences
 
 - **Prérequis** : registre MLflow et version réelle du modèle (ADR-0002), enregistrement des prédictions (ADR-0001), reverse proxy sur le VPS pour le canary de l'image (ADR-0004).
 - **À implémenter** (rien n'est encore en place) :
-  - l'inscription avec l'alias `challenger` dans l'entraînement ;
+  - l'évaluation du champion sur le jeu de test du nouveau modèle, puis l'inscription avec l'alias `challenger` dans l'entraînement si le score est meilleur ;
   - la variable `CANARY_PERCENT` dans `config.py` et `.env.example` ;
   - le chargement des deux versions et la répartition dans l'API (`MLPredict` reçoit les deux modèles, ou un service de routage les enveloppe) ;
   - un `order_id` toujours présent : il est facultatif dans `OrderEntity`, et l'API devra en générer un s'il est absent ;
   - une commande CLI de promotion (déplacer l'alias `champion`) ;
   - un endpoint `GET /model` qui expose la model card, avec la version du challenger, ainsi que cette version dans `/health/ready` ;
   - la pondération du trafic entre deux images dans la configuration du reverse proxy.
-- **Des métriques sont nécessaires pour piloter le canary** : comparaison de la latence et des erreurs dès le départ, puis de la qualité (f1, précision…) une fois le résultat réel des commandes connu. Cela dépend de la remontée du label réel (point ouvert de l'ADR-0001) et de la supervision. Tant que la supervision n'existe pas, la comparaison se fait par requête sur les prédictions enregistrées.
+- **Deux contrôles, à deux moments** :
+  - **avant le canary**, la qualité (f1, précision…) : le nouveau modèle et le champion sont évalués sur le même jeu de test de l'ERP. Sans meilleur score, le nouveau modèle n'est pas inscrit comme challenger et le champion reste en service ;
+  - **pendant le canary**, la latence et le taux d'erreur du challenger, comparés à ceux du champion. Tant que la supervision n'existe pas, la comparaison se fait par requête sur les prédictions enregistrées.
 - **Deux modèles en mémoire** pendant un canary : la consommation mémoire de l'API double pendant cette période.
 - **Volume minimal** : avec peu de trafic, une petite part ne donne pas assez de prédictions pour comparer les versions. La durée de chaque étape doit tenir compte du volume réel.
 
 ### Points restant ouverts
 
 - **Paliers** de montée en charge et **durée** de chaque palier.
-- **Seuils de promotion** : écart de latence, de taux d'erreur et de qualité acceptable entre challenger et champion.
+- **Seuils de promotion** : écart de score minimal pour qu'un nouveau modèle devienne challenger, puis écart de latence et de taux d'erreur acceptable entre challenger et champion.
 - **Promotion manuelle ou automatique.**
 
 ---
@@ -595,3 +597,110 @@ En dev, les commandes sont en mémoire (ADR-0001) : l'option A ne concerne que l
 - **Emplacement des sauvegardes** hors du VPS.
 - **Chiffrement du disque** du VPS.
 - **Fréquence de renouvellement** des mots de passe.
+
+---
+
+## ADR-0009 — Quelle base de l'ERP utiliser comme source des données d'entraînement
+
+**Status :** Accepté
+**Date :** 29/10/2026
+
+### Contexte
+
+L'entraînement utilise aujourd'hui des commandes synthétiques générées en mémoire (ADR-0001). Pour s'entraîner sur des commandes réelles, il doit lire celles de l'ERP de l'entreprise, qui les écrit dans deux bases. Le dossier `erp_prod_test/` simule cet ERP et alimente les deux bases.
+
+**L'entraînement ne se fait qu'avec les données de l'ERP.** Un ETL met à jour les bases de l'ERP avec les commandes et leur label (la livraison express était-elle possible ?). Les commandes reçues par notre API ne servent pas à l'entraînement.
+
+Cet ADR choisit **la base de l'ERP d'où l'entraînement lit les commandes**. Il ne remet pas en cause l'ADR-0001, qui choisit PostgreSQL pour **le stockage propre à l'application** (commandes reçues par l'API, prédictions, labels réels). Ce sont deux bases distinctes.
+
+Ce que disent les développeurs de l'ERP :
+
+| | PostgreSQL | MongoDB |
+|---|---|---|
+| Rôle | Première base du logiciel, base de production | Base montée pour les Data Analysts, parce qu'ils cassaient la base de production |
+| Historique | Depuis 2015 | Depuis 2023. L'historique antérieur n'a pas été copié |
+| Schéma | Modifié en 2017 et en 2023 | Créé en 2023, après la dernière modification du schéma |
+| Maintenance | Plus mise à jour depuis 2023 : l'administrateur a démissionné et n'a pas été remplacé | Maintenue par un alternant dont le contrat se termine bientôt |
+| Autres usages | Utilisée aussi par une autre application critique pour l'entreprise | Aucun, hors analyse |
+
+Ce que montre le simulateur (`erp_prod_test/`) :
+
+- les commandes depuis 2023 sont les **mêmes dans les deux bases**, avec le même identifiant (`ERP-00011001`). Le flux courant est écrit dans les deux bases ;
+- dans PostgreSQL, `weekend` vaut `NULL` avant le 1er juillet 2015 et `preparation_time_min` vaut `NULL` avant le 1er juillet 2017. Ces deux variables sont des entrées du modèle (`OrderEntity`) ;
+- dans MongoDB, les commandes sont dans la collection `orders` de la base `livraison_express`, avec un index unique sur `order_id`. `order_date` y est stocké en `datetime` ;
+- MongoDB tourne sans authentification et son port est publié sur toutes les interfaces.
+
+Ce que la source doit permettre :
+
+- **lire les commandes** sans gêner l'ERP ni l'autre application critique ;
+- **fournir des données cohérentes avec le schéma actuel**, celui des commandes que l'API reçoit ;
+- **filtrer par période**, pour entraîner et évaluer sur des fenêtres de dates ;
+- **avoir un responsable** capable de créer un compte en lecture seule (ADR-0008) et de corriger un incident.
+
+### Options considérées
+
+| Option | Avantage | Inconvénient |
+|---|---|---|
+| A. PostgreSQL | Historique complet depuis 2015 (environ 11 000 commandes dans le simulateur). Schéma typé | Base de production partagée avec une application critique : une requête lourde ralentit les deux applications. Plus d'administrateur : personne pour créer le compte en lecture seule ni pour réagir à un incident. Valeurs `NULL` avant 2015 et 2017 à imputer ou à écarter. Les commandes 2015-2022 suivent d'anciens schémas |
+| B. MongoDB | Base prévue pour l'analyse, isolée de la production : l'entraînement ne peut rien casser côté ERP. Données au schéma actuel, toutes les colonnes renseignées. Mêmes commandes que PostgreSQL depuis 2023, flux courant compris | Historique limité à 2023 → aujourd'hui (environ 1 000 commandes dans le simulateur). Mainteneur sur le départ. Aucun schéma imposé par la base |
+| C. Les deux : MongoDB pour 2023 → aujourd'hui, PostgreSQL pour 2015-2022 | Historique complet sans charger la production en continu | Deux connecteurs à maintenir. Dépend toujours de PostgreSQL, donc d'un administrateur absent. Mélange de données issues de schémas différents |
+
+### Décision
+
+**Option B : l'entraînement lit les commandes dans MongoDB.**
+
+- **Ne pas toucher à la production.** MongoDB existe justement pour que l'analyse ne passe plus par la base de production. Brancher l'entraînement sur PostgreSQL referait l'erreur qui a mené à sa création, avec en plus une application critique exposée.
+- **Des données qui ressemblent à celles de l'API.** Les commandes depuis 2023 suivent le schéma actuel. Le modèle apprend sur des commandes comparables à celles qu'il évaluera. Les commandes de 2015 à 2017 auraient demandé d'imputer `weekend` et `preparation_time_min`.
+- **Le volume suffit pour commencer.** Trois ans de commandes, complétés en continu par le flux courant. Le volume nécessaire se vérifie avec les métriques de l'entraînement (ADR-0002), pas a priori.
+- **Un risque de maintenance qui se corrige.** Le départ de l'alternant se prépare : passation, documentation, reprise par l'équipe. L'absence d'administrateur de PostgreSQL ne dépend pas de l'équipe, et une erreur sur cette base touche une autre application.
+- **L'option C est écartée pour l'instant.** Elle garde la dépendance à PostgreSQL pour un gain qui n'est pas démontré. Elle reste possible plus tard (voir « Points restant ouverts »).
+
+**Le métier ne dépend pas du moteur** : l'entraînement ne connaît que `OrderRepositoryInterface`. Seule l'implémentation MongoDB contient du code `pymongo`.
+
+**Cycle de réentraînement :**
+
+1. l'ETL de l'ERP ajoute les nouvelles commandes labellisées dans MongoDB ;
+2. `train` lit toutes les commandes labellisées et entraîne un nouveau modèle ;
+3. le nouveau modèle et le modèle en service (`champion`) sont évalués **sur le même jeu de test** : les commandes les plus récentes, qui n'ont servi à entraîner aucun des deux ;
+4. si le nouveau modèle a un meilleur score, il devient le challenger puis le champion (ADR-0006). Sinon, le modèle en service est conservé, et le prochain entraînement se fera avec les nouvelles données de l'ETL.
+
+Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : les nouvelles données peuvent simplement être plus faciles ou plus difficiles à prédire. D'où l'étape 3.
+
+**L'ETL est un système externe** : il appartient à l'ERP, tourne à part, et notre application ne le lance jamais. `train` lit ce qui se trouve dans MongoDB au moment où il démarre.
+
+**Par environnement :**
+
+| Environnement | Source des commandes (`TRAINING_SOURCE_URL`) | Qui alimente MongoDB |
+|---|---|---|
+| Dev, tests unitaires | `memory://` : générateur synthétique | Personne, pas de MongoDB |
+| Dev, test du cycle complet | MongoDB de dev (`mongodb://mongodb:27017/livraison_express`) | L'ETL simulé (`etl_simulator/`), au format de l'ERP |
+| Prod | MongoDB de l'ERP, compte en lecture seule | L'ETL de l'ERP |
+
+- **Le MongoDB et l'ETL de dev** sont deux services du profil `etl` de `docker-compose.yml` (`docker compose --env-file .env.dev --profile etl up -d --build`). Ils n'existent pas en prod.
+- **L'ETL simulé n'utilise pas `erp_prod_test/`** : ce dossier joue l'ERP de prod, faute de serveur, et l'application n'a pas à en dépendre. L'ETL simulé écrit directement ce que le vrai ETL chargerait : des commandes au format de l'ERP (`clear`, `suburb`, `business`…), avec un label calculé par une règle métier simulée.
+- **Le générateur `memory://` n'a pas les mêmes valeurs que l'ERP** (`normal`, `banlieue`, `premium`…) : un modèle entraîné en `memory://` ne dit rien de son comportement sur les données de l'ERP. Pour tester comme en prod, on passe par le MongoDB de dev.
+
+### Conséquences
+
+- **Implémentation** : `MongoOrderRepository` dans `infrastructure/repository/mongo_order_repository.py`. Elle implémente le même contrat que `InMemoryOrderRepository` (`save`, `get`, `get_training_data`). Dépendance `pymongo`, déjà utilisée par le simulateur (`erp_prod_test/requirements-databases.txt`).
+- **`save` réservé au dev et à la CI** : il sert à alimenter une base MongoDB de test. En prod, le compte de l'entraînement est en lecture seule et MongoDB refuse l'écriture : seul l'ETL écrit dans la base de l'ERP.
+- **Choix par configuration** : la variable `TRAINING_SOURCE_URL` (`memory://` ou `mongodb://hôte:27017/livraison_express`) choisit l'implémentation dans la racine de composition `core/core.py` (`build_order_repository`). En dev, la source reste en mémoire.
+- **Validation à la lecture** : MongoDB n'impose aucun schéma. Chaque document est converti en `OrderEntity` : un champ absent, `null` ou de mauvais type écarte le document, compté dans les logs, jamais utilisé en silence. Les documents sans label (`express_eligible`) ne servent pas à l'entraînement.
+- **Conversion des dates** : `order_date` est lu en `datetime` et ramené à une date pour choisir les commandes les plus récentes du jeu de test.
+- **À implémenter** : l'évaluation du champion sur le même jeu de test que le nouveau modèle, et la règle de promotion.
+- **Sécurité, dans la continuité de l'ADR-0008** :
+  - un compte MongoDB en lecture seule sur `livraison_express.orders` pour l'entraînement (rôle `read`), à créer avec le mainteneur actuel avant son départ ;
+  - l'authentification MongoDB activée en CI et en prod ;
+  - le port MongoDB lié à `127.0.0.1`, et l'accès depuis un poste par tunnel SSH.
+- **Tests de contrat** : la même suite vérifie `InMemoryOrderRepository` et `MongoOrderRepository` (`tests/test_order_repository.py`), avec une collection MongoDB factice. Reste à la faire tourner aussi sur un vrai MongoDB, avec un service container en CI.
+- **Passation avant la fin du contrat de l'alternant** : documenter la base (collections, index, sauvegardes, alimentation par l'ERP) et désigner un responsable dans l'équipe.
+- **Un historique plus court** : pas de saisonnalité sur plusieurs années. C'est accepté tant que les métriques du modèle restent bonnes.
+
+### Points restant ouverts
+
+- **L'ETL de l'ERP écrit-il le label ?** Le MongoDB de l'ERP (`erp_prod_test/`) ne contient aujourd'hui aucun label : sans lui, l'entraînement en prod reçoit 0 commande. Il faut savoir où le SI connaît le résultat réel des livraisons, et qui écrit l'ETL s'il n'existe pas.
+- **Nom du champ du label** : `express_eligible` est supposé, comme la cible du modèle et l'ETL simulé. À confirmer avec l'ERP, sinon changer `LABEL_FIELD` dans `mongo_order_repository.py`.
+- **Taille du jeu de test** de la comparaison (nombre de semaines les plus récentes) et **écart minimal** pour qu'un score soit jugé meilleur.
+- **Récupérer l'historique 2015-2022** si les métriques montrent qu'il manque des données : un export ponctuel en lecture seule depuis PostgreSQL, en heures creuses, vers MongoDB. Il faut pour cela retrouver quelqu'un qui a les droits sur PostgreSQL.
+- **Qui reprend MongoDB** après le départ de l'alternant.
+- **Sauvegardes de MongoDB** : existent-elles aujourd'hui ? Sinon, un `mongodump` quotidien sur le modèle du `pg_dump` de l'ADR-0008.
