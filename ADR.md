@@ -9,9 +9,9 @@
 
 L'API expose `POST /predict` : elle reçoit une commande, renvoie une prédiction, et **n'enregistre rien**. Ni la commande ni la prédiction ne sont conservées.
 
-Le seul stockage de commandes est `InMemoryOrderRepository`, un dictionnaire Python rempli au démarrage par le générateur de données synthétiques (`generated=True`). La commande `train` s'entraîne sur ces données générées. Elles disparaissent à l'arrêt du processus et ne sont pas partagées entre l'API et `train`, qui tournent dans deux processus distincts.
+Le seul stockage de commandes est `InMemoryOrderRepository`, un dictionnaire Python rempli au démarrage de l'entraînement avec les données du générateur synthétique. La commande `train` s'entraîne sur ces données générées. Elles disparaissent à l'arrêt du processus et ne sont pas partagées entre l'API et `train`, qui tournent dans deux processus distincts.
 
-L'abstraction `OrderRepository` existe déjà (`save`, `get`, `get_all`, `count`), mais l'implémentation est choisie en dur dans `core/core.py`. `config.py` déclare `ORDER_REPOSITORY_URL` (valeur par défaut `memory://`) sans s'en servir.
+L'interface `OrderRepository` (`domain/ports.py`) ne déclare que ce dont l'entraînement a besoin : `get_training_data()`. L'implémentation est choisie dans la racine de composition `core/core.py`.
 
 Ce que le stockage doit permettre :
 
@@ -53,9 +53,8 @@ C'est acceptable en dev, car les données sont synthétiques et regénérées au
 
 ### Conséquences
 
-- **Choix de l'implémentation par configuration** : `Settings.order_repository_url` (`ORDER_REPOSITORY_URL`) détermine l'implémentation : `memory://` (valeur par défaut) ou `postgresql://…`. Ce choix se fait uniquement dans la racine de composition `core/core.py`, qui instancie aujourd'hui `InMemoryOrderRepository` en dur. Il faut la remplacer par une factory qui lit l'URL.
-- **Incohérence de configuration à corriger** : `.env.example` documente `ORDER_STORE_DSN` alors que `config.py` lit `ORDER_REPOSITORY_URL`. Il faut aligner les deux sur `ORDER_REPOSITORY_URL`.
-- **Contrat du repository à compléter** : `get_training_data()` est utilisé par `Core.train_model()` mais n'existe que dans `InMemoryOrderRepository`. Il faut l'ajouter à `OrderRepository`, avec des méthodes pour enregistrer une prédiction et pour poser le label réel.
+- **Choix de l'implémentation par configuration** : à l'arrivée de PostgreSQL, une variable `ORDER_REPOSITORY_URL` (`memory://` ou `postgresql://…`) s'ajoutera à `Settings`, et la racine de composition `core/core.py` choisira l'implémentation selon sa valeur. Ce choix ne se fait nulle part ailleurs.
+- **Contrat du repository** : `get_training_data()` fait partie de l'interface `OrderRepository`. Les méthodes pour enregistrer une commande, sa prédiction et son label réel s'y ajouteront quand l'API les utilisera (YAGNI).
 - **Identifiant obligatoire à l'enregistrement** : `order_id` est facultatif dans `OrderEntity`, et `InMemoryOrderRepository.save()` range la commande sous la clé `order_id`. Toutes les commandes sans identifiant écrasent donc la même entrée (`None`). L'API doit générer un identifiant avant d'enregistrer, ou le repository doit refuser une commande sans identifiant.
 - **Cycle complet testé uniquement avec PostgreSQL** : en dev, `train` s'entraîne sur les données générées, jamais sur les prédictions reçues par l'API. La chaîne prédiction → label réel → réentraînement ne se vérifie qu'avec PostgreSQL, en CI ou avec `docker compose` (ADR-0004).
 - **Un seul worker en dev** : l'API en mémoire tourne avec un seul worker uvicorn (déjà le cas avec `serve`), pour que toutes les requêtes voient les mêmes données.
@@ -64,7 +63,7 @@ C'est acceptable en dev, car les données sont synthétiques et regénérées au
 - **Outillage SQL et migrations** : SQLAlchemy et Alembic (déjà dans `requirements.txt`) pour l'implémentation PostgreSQL.
 - **Déploiement** : un serveur PostgreSQL fonctionne, que l'API et l'entraînement tournent sur une ou deux machines.
 - **Outillage** : DBeaver pour consulter la base PostgreSQL.
-- **Architecture** : l'accès aux commandes passe par l'abstraction `infrastructure/order_repository.py`. L'implémentation PostgreSQL va dans `infrastructure/implementation/` (par exemple `sql/sql_order_repository.py`). Passer de la mémoire à PostgreSQL revient à changer la configuration, sans toucher au métier ni à l'API.
+- **Architecture** : l'accès aux commandes passe par l'interface `OrderRepository` de `domain/ports.py`. L'implémentation PostgreSQL va dans `infrastructure/implementation/` (par exemple `sql/sql_order_repository.py`). Passer de la mémoire à PostgreSQL revient à changer la configuration, sans toucher au métier ni à l'API.
 
 ### Points restant ouverts (sans impact sur le choix du moteur)
 
@@ -148,8 +147,8 @@ Aucun service ne peut modifier la base d'un autre.
 - **Schéma géré par MLflow** : MLflow crée et fait évoluer ses propres tables (`mlflow db upgrade`). Les contraintes de l'ADR-0001 (`NOT NULL`, `CHECK`, `UNIQUE`…) s'appliquent à nos tables, pas à celles de MLflow.
 - **Chaque entraînement est un run MLflow** (déjà le cas) : paramètres, métriques et modèle y sont enregistrés. Le modèle est en plus inscrit dans le Model Registry sous un nom unique (`registered_model_name`), et la version en production est désignée par un alias.
 - **La version vient du registre, plus de la configuration** : `MODEL_VERSION` disparaît. `PredictionEntity.model_version` et la model card (`ModelEntity`) portent la version du Model Registry. La version stockée avec chaque prédiction (ADR-0001) correspond donc à un modèle réellement retrouvable.
-- **Dépendance au démarrage** : l'API charge le modèle **une seule fois au démarrage** et le garde en mémoire (déjà le cas avec `Core(load_model=True)`). Elle ne sollicite pas MLflow à chaque prédiction.
-- **Architecture** : l'accès au modèle passe par l'abstraction `infrastructure/model_repository.py`, implémentée par une nouvelle classe `MlflowModelRepository`. `FileModelRepository` reste disponible pour les tests et le dev hors ligne. Le choix se fait dans `core/core.py`, selon la configuration. L'API et le métier ne dépendent pas directement de MLflow.
+- **Dépendance au démarrage** : l'API charge le modèle **une seule fois au démarrage** et le garde en mémoire (déjà le cas avec `build_prediction_service`). Elle ne sollicite pas MLflow à chaque prédiction.
+- **Architecture** : l'accès au modèle passe par l'interface `ModelRepository` de `domain/ports.py`, implémentée par une nouvelle classe `MlflowModelRepository`. Le suivi des entraînements passe déjà par l'interface `ExperimentTracker`, implémentée par `MlflowTracker`. `FileModelRepository` reste disponible pour les tests et le dev hors ligne. Le choix se fait dans `core/core.py`, selon la configuration. L'API et le métier ne dépendent pas directement de MLflow.
 
 ### Points restant ouverts
 
@@ -195,12 +194,12 @@ L'entraînement doit :
 
 ### Conséquences
 
-- **Isolation à corriger** : aujourd'hui, `api/app.py` importe `Core`, qui importe `MLTrainer` et donc `mlflow` et les métriques d'entraînement. `Core` doit être séparé en deux assemblages : l'un pour servir (modèle chargé + `MLPredict`), l'autre pour entraîner (`MLTrainer` + `MLPipeline`). L'API n'utilise que le premier.
-- **Singleton à revoir** : `Core` est un singleton dont l'état dépend du premier appel (`load_model`). Une factory explicite par point d'entrée simplifie les tests et évite qu'une configuration fuie d'un test à l'autre (voir la section 12 de l'architecture).
+- **Isolation** : la racine de composition `core/core.py` propose deux assemblages, `build_prediction_service` pour l'API et `build_training_service` pour l'entraînement. L'API n'importe ni MLflow ni le code d'entraînement, ce qu'un test vérifie (`test_api_does_not_import_training_code`).
+- **Pas d'état global** : chaque point d'entrée crée sa configuration (`Settings`) et ses objets ; aucune classe métier ne lit la configuration elle-même. Les tests construisent leurs propres objets, sans configuration qui fuit d'un test à l'autre.
 - **Imports relatifs dans tout le package** : le même code se lance avec `python -m src.app` depuis la racine du dépôt, et avec `python -m app` dans les images Docker, où il est copié sous le nom `app`.
 - **Données d'entraînement** : `train` lit les commandes labellisées dans la base (ADR-0001) et non plus le générateur en mémoire. La génération de données synthétiques devient une commande séparée qui alimente la base de dev ; elle n'est pas du code de production.
 - **Préparation des variables dans le pipeline** : le nettoyage et la préparation des variables restent intégrés au pipeline scikit-learn (`MLPipeline`) enregistré dans MLflow. Cela garantit un traitement identique à l'entraînement et à la prédiction.
-- **La model card est construite à partir du contrat** : `Core.train_model()` recopie aujourd'hui la liste des features en dur. Elle doit utiliser `FEATURE_COLUMNS` (DRY).
+- **La model card est construite à partir du contrat** : `TrainingService` utilise `FEATURE_COLUMNS` et lit le type de modèle dans le pipeline, sans rien recopier en dur (DRY).
 - **Autres commandes possibles** sur le même modèle : calcul des métriques réelles en production, promotion d'une version, alimentation de la base de dev.
 
 ### Points restant ouverts
@@ -255,7 +254,7 @@ La plateforme doit :
   - un `.dockerignore` qui exclut au minimum `.env`, `.venv/`, `notebooks/` et les artéfacts ;
   - un `docker-compose.yml` avec les services `api`, `mlflow` et `db`. PostgreSQL démarre avec un profil `prod`, puisqu'en dev les commandes sont en mémoire (ADR-0001) ;
   - un healthcheck Docker qui interroge `/health`.
-- **Le `docker-compose.yml` est le descripteur de déploiement.** Tout service de prod y figure. Le choix entre dev et prod se fait par `ENVIRONMENT` et `COMPOSE_PROFILES`.
+- **Le `docker-compose.yml` est le descripteur de déploiement.** Tout service de prod y figure. Le choix entre dev, test et prod se fait par `APP_ENV`, dans le fichier `.env.<environnement>` passé à Compose.
 - **Écoute réseau** : dans le conteneur, l'API écoute sur `0.0.0.0` (la CLI utilise `127.0.0.1` par défaut, ce qui la rendrait injoignable depuis l'hôte). C'est le compose qui limite l'exposition (ADR-0005).
 - **Dépendances** : `requirements.txt` contient l'environnement complet de développement, y compris `pywin32`, qui ne s'installe pas dans une image Linux. Il faut séparer les dépendances d'exécution (`requirements.txt`) et de développement (`requirements-dev.txt`).
 - **Déploiement manuel en attendant la CI/CD** : sur la machine cible, récupérer le code (`git pull`) puis lancer `docker compose up -d --build`. Plus tard, la CI construira les images et les publiera dans un registre (par exemple GitHub Container Registry) : le VPS n'aura plus qu'à les télécharger.
@@ -289,7 +288,7 @@ L'application ne tourne aujourd'hui que sur le poste du développeur. Il n'exist
 
 | Option | Avantage | Inconvénient |
 |---|---|---|
-| A. Local (poste du développeur, pile `ENVIRONMENT=prod` lancée avec Docker Compose) | Gratuit et immédiat. Aucune exposition sur Internet | Pas joignable de l'extérieur. S'arrête avec le poste. Pas une vraie prod |
+| A. Local (poste du développeur, pile `APP_ENV=prod` lancée avec Docker Compose) | Gratuit et immédiat. Aucune exposition sur Internet | Pas joignable de l'extérieur. S'arrête avec le poste. Pas une vraie prod |
 | B. VPS (serveur virtuel loué : OVHcloud, Scaleway, Hetzner…) | Quelques euros par mois. Accès complet à la machine. Même Docker qu'en local. Hébergeur européen possible | Système, sécurité, mises à jour et sauvegardes à notre charge |
 | C. On-premise (serveur de l'école ou de l'entreprise) | Pas de location. Données sur place | Dépend de la disponibilité et des règles du propriétaire du serveur. Accès depuis l'extérieur à négocier |
 | D. Cloud public avec services managés (Azure, AWS, GCP) | Base, stockage, secrets et HTTPS gérés par le fournisseur. Mise à l'échelle | Coût variable. Configuration propre à chaque fournisseur et dépendance envers lui. Surdimensionné pour ce projet |
@@ -298,7 +297,7 @@ L'application ne tourne aujourd'hui que sur le poste du développeur. Il n'exist
 
 **Option A pour l'instant : la production tourne en local. Passage possible sur un VPS (option B) plus tard. Pas de cloud public avec services managés.**
 
-- **En local**, la « prod » est la pile `ENVIRONMENT=prod` (avec PostgreSQL) lancée sur un poste. C'est suffisant pour les démonstrations.
+- **En local**, la « prod » est la pile `APP_ENV=prod` (avec PostgreSQL) lancée sur un poste. C'est suffisant pour les démonstrations.
 - **Sur un VPS ensuite**, quand l'API devra être joignable depuis Internet, sans changer d'outil (même Docker Compose, ADR-0004).
 
 **Services cloud : aucun n'est retenu.** Si un passage au cloud est décidé plus tard, voici la correspondance des composants :
@@ -488,7 +487,7 @@ Ces choix s'accompagnent des mesures suivantes sur les entrées et les sorties.
   - l'enregistrement de chaque client chez le fournisseur d'identité, avec son périmètre ;
   - des tests des réponses 401 et 403 avec des jetons signés par une clé de test ;
   - le service reverse proxy dans le compose, pour HTTPS sur le VPS.
-- **Garde-fou** : au démarrage, l'API refuse `AUTH_MODE=api_key` quand `ENVIRONMENT=prod`, une fois le passage à OAuth2 effectué. La clé d'API ne peut donc pas rester active en prod par oubli.
+- **Garde-fou** : au démarrage, l'API refuse `AUTH_MODE=api_key` quand `APP_ENV=prod`, une fois le passage à OAuth2 effectué. La clé d'API ne peut donc pas rester active en prod par oubli.
 - **Un service de plus en prod** : le fournisseur d'identité (auto-hébergé comme Keycloak, ou externe) doit être disponible pour que les clients obtiennent un jeton. L'API, elle, ne l'appelle pas à chaque requête : elle garde en cache les clés publiques du JWKS.
 - **Versionnage de l'API** : les routes métier passent sous un préfixe `/v1` (`/v1/predict`) avant la mise en ligne, pour pouvoir faire évoluer le contrat sans casser les clients.
 - **Documentation client** : l'en-tête `X-API-Key` (dev) puis `Authorization: Bearer` (prod) est documenté dans le README et dans le schéma OpenAPI généré par FastAPI (schémas de sécurité `apiKey`, puis `oauth2`).
@@ -574,7 +573,7 @@ En dev, les commandes sont en mémoire (ADR-0001) : l'option A ne concerne que l
   - mots de passe différents par environnement, changés en cas de fuite.
 - **Chiffrement en transit** : HTTPS pour l'API (ADR-0007). Les échanges avec PostgreSQL et MLflow restent sur le réseau Docker interne de la machine, ou passent par le tunnel SSH.
 - **Sauvegardes** : export quotidien de la base (`pg_dump`) et archive du volume `mlflow_data`, stockés hors du VPS, avec un test de restauration régulier.
-- **Génération de données synthétiques** : interdite quand `ENVIRONMENT=prod`, ou soumise à une confirmation explicite.
+- **Génération de données synthétiques** : interdite quand `APP_ENV=prod`, ou soumise à une confirmation explicite.
 
 ### Conséquences
 

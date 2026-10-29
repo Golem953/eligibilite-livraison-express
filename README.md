@@ -42,7 +42,6 @@ Copier `.env.example` en `.env`. Une clé laissée vide prend la valeur par déf
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `ENVIRONMENT` | `local` | `local`, `test` ou `prod` |
 | `MODEL_PATH` | `notebooks/artifacts/express_delivery_model.joblib` | Fichier du modèle écrit par `train` et lu par l'API |
 | `MODEL_THRESHOLD` | `0.5` | Seuil de probabilité au-delà duquel la commande est éligible |
 | `MODEL_VERSION` | `1.0.0` | Version renvoyée dans chaque prédiction |
@@ -165,10 +164,13 @@ src/app/
 ├── config.py                configuration lue depuis l'environnement et .env
 ├── api/app.py               API FastAPI
 ├── core/
-│   ├── core.py              assemblage des composants
+│   ├── core.py              racine de composition : assemble l'API et l'entraînement
+│   ├── training.py          cas d'usage « entraîner le modèle »
 │   └── learning/            pipeline, entraînement, prédiction, contrat des variables
-├── domain/entities.py       commande, prédiction, model card
-└── infrastructure/          abstractions de stockage et implémentations de dev
+├── domain/
+│   ├── entities.py          commande, prédiction, model card
+│   └── ports.py             interfaces : OrderRepository, ModelRepository, ExperimentTracker
+└── infrastructure/          implémentations : fichiers, mémoire, MLflow
 notebooks/                   notebook d'exploration d'origine
 order.json                   exemple de commande
 tests/                       tests pytest
@@ -189,10 +191,10 @@ pytest
 | `test_order_feature.py` | Le contrat des variables du modèle : mêmes colonnes, même ordre, `order_id` exclu |
 | `test_order_generator.py` | Le générateur de données : reproductible, labels binaires, identifiants uniques |
 | `test_ml_predict.py` | La décision selon le seuil, l'arrondi de la probabilité, la version et l'horodatage |
-| `test_api.py` | Les routes, les statuts 200/503/422 et le contrat de réponse de `/predict` |
-| `test_training.py` | Un entraînement complet, la qualité minimale du modèle et la sauvegarde puis le rechargement |
+| `test_api.py` | Les routes, les statuts 200/503/422, le contrat de réponse de `/predict`, et l'isolation de l'API (elle n'importe ni MLflow ni le code d'entraînement) |
+| `test_training.py` | L'entraînement et ses métriques, le service d'entraînement, les stockages du modèle et des commandes, puis l'assemblage complet de bout en bout |
 
-Les tests de l'API et de la prédiction utilisent un modèle factice : ils sont rapides et ne dépendent pas de l'entraînement.
+Les classes reçoivent leurs dépendances au lieu de les créer : les tests leur passent un modèle ou un tracker MLflow factice. Ils sont rapides et ne dépendent pas d'un entraînement préalable.
 
 ## CI/CD
 
