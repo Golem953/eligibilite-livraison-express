@@ -1,25 +1,20 @@
 """Générateur de commandes de développement.
 
-`generate_orders_dataset()` du notebook synthétise 6 000 commandes avec une graine
-fixe (`random_state=42`). C'est ce qui rend le notebook exécutable sans source de
-données externe, et ce qui rend les tests et les entraînements reproductibles.
+La cellule 8 du notebook synthétise 6 000 commandes avec une graine fixe
+(`random_state=42`). C'est ce qui rend l'entraînement possible sans source de données
+externe, et ce qui rend les tests et les entraînements reproductibles.
 
 Le corps de la cellule 8 est déplacé **à l'identique** — même appel de générateur,
-même ordre d'appels, même pondération du score, même sigmoïde — sous couvert de
+même ordre d'appels, même pondération du score, même sigmoïde — dans
 `generate_labeled_orders()` : la logique de scoring est ce qui rend le jeu de données
 apprenable. Une variation en ferait un autre jeu de données, et vos métriques ne
 ressembleraient plus à celles du notebook (`accuracy ≈ 0.75`), sans qu'on sache
 pourquoi.
 
-Deux fonctions, une seule génération (DRY) :
-
-- `generate_labeled_orders()` renvoie des commandes **et** leur étiquette
-  (`express_eligible`) : c'est la source d'entraînement de `TrainEligibilityModel`,
-  la cible n'ayant pas sa place dans `OrderFeatures` (on ne prédit pas ce qu'on
-  connaît) ;
-- `generate_orders_dataset()` applique la signature de la cellule 8, une liste de
-  `OrderFeatures` sans étiquette : c'est ce qui peuple l'API en local et les tests.
-  Le `DataFrame` pandas reste un détail de la génération : il ne sort pas d'ici.
+`generate_labeled_orders()` renvoie les commandes **et** leur étiquette
+(`express_eligible`) séparément : la cible n'a pas sa place dans `OrderEntity`, on ne
+prédit pas ce qu'on connaît. Le `DataFrame` pandas reste un détail de la génération :
+il ne sort pas d'ici.
 """
 
 from __future__ import annotations
@@ -130,10 +125,3 @@ def generate_labeled_orders(
     ]
     labels = data["express_eligible"].astype(int).tolist()
     return orders, labels
-
-
-def generate_orders_dataset(n_rows: int = 6000, random_state: int = 42) -> list[OrderEntity]:
-    """Générer des commandes **sans** l'étiquette d'éligibilité express.
-    """
-    orders, _labels = generate_labeled_orders(n_rows=n_rows, random_state=random_state)
-    return orders

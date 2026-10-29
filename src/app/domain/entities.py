@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 
@@ -31,20 +31,14 @@ class PredictionEntity:
     model_version: str
     prediction_timestamp: str
 
+
 @dataclass(frozen=True)
 class ModelEntity:
-    """Métadonnées et métriques du modèle en service (cellule 55 du notebook).
+    """Fiche du modèle (model card) : métadonnées et métriques (cellule 55 du notebook).
 
-    Déclaré dès la séance 1, et non en séance 3 comme le prévoyait le squelette :
     `FileModelRepository.save()` écrit `metrics.json` et `features.json` à partir de
-    ces champs, donc `python -m livraison_express train` (définition de terminé de la
-    séance 1) ne peut pas exister sans eux. La séance 3 ajoutera l'endpoint
-    `GET /v1/model` qui les expose.
-
-    Champs alignés champ pour champ sur le schéma `ModelEntity` de
-    `docs/api/openapi.yml`. Les champs de la cellule 55 absents du contrat
-    (`positive_class`, `training_rows`...) ne sont pas portés : le contrat fait foi,
-    et YAGNI s'applique aux champs de réponse comme au code.
+    ces champs. Les champs de la cellule 55 qui ne servent à rien ici
+    (`positive_class`, `training_rows`...) ne sont pas portés : YAGNI.
     """
 
     project: str
@@ -56,4 +50,3 @@ class ModelEntity:
     features: list[str]
     metrics: dict[str, float]
     trained_at: datetime | None = None
-    limitations: list[str] = field(default_factory=list)
