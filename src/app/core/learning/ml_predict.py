@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
-from ...domain.entities import OrderEntity, PredictionEntity
+from ...domain.entities.order_entity import OrderEntity
+from ...domain.entities.prediction_entity import PredictionEntity
 from .order_feature import orders_to_dataframe
 
 

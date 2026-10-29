@@ -5,34 +5,6 @@ from datetime import datetime
 
 
 @dataclass(frozen=True)
-class OrderEntity:
-    hour: int
-    day_of_week: int
-    weekend: int
-    distance_km: float
-    order_value_eur: float
-    weight_kg: float
-    stock_available: int
-    preparation_time_min: float
-    carrier_capacity: float
-    weather: str
-    delivery_zone: str
-    customer_type: str
-    order_id: str | None = None
-
-
-@dataclass(frozen=True)
-class PredictionEntity:
-    """Résultat métier d'une prédiction d'éligibilité."""
-
-    express_eligible: bool
-    decision: str
-    probability: float
-    model_version: str
-    prediction_timestamp: str
-
-
-@dataclass(frozen=True)
 class ModelEntity:
     """Fiche du modèle (model card) : métadonnées et métriques (cellule 55 du notebook).
 

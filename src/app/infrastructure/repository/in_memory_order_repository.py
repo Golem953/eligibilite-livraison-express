@@ -1,4 +1,4 @@
-"""`OrderRepository` de développement : les commandes dans un dictionnaire en mémoire.
+"""`OrderRepositoryInterface` de développement : les commandes dans un dictionnaire en mémoire.
 
 Il reçoit ses commandes à la construction : il ne sait pas d'où elles viennent
 (générateur de données synthétiques en dev, jeu de test dans les tests).
@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ....domain.entities import OrderEntity
-from ....domain.ports import OrderRepository
+from ...domain.entities.order_entity import OrderEntity
+from ...domain.interface.order_repository_interface import OrderRepositoryInterface
 
 
-class InMemoryOrderRepository(OrderRepository):
+class InMemoryOrderRepository(OrderRepositoryInterface):
     """Commandes labellisées gardées en mémoire, indexées par `order_id`."""
 
     def __init__(self, orders: Sequence[OrderEntity], labels: Sequence[int]):

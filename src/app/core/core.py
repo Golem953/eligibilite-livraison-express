@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 
 from ..config import Settings
-from ..infrastructure.implementation.dev.file_model_repository import FileModelRepository
+from ..infrastructure.repository.file_model_repository import FileModelRepository
 from .learning.ml_predict import MLPredict
 
 logger = logging.getLogger(__name__)
@@ -49,15 +49,15 @@ def build_prediction_service(settings: Settings) -> MLPredict | None:
 def build_training_service(settings: Settings):
     """Assemble l'entraînement : données synthétiques, pipeline, MLflow, fichier modèle."""
     # Imports locaux : seul l'entraînement en a besoin, l'API ne les charge jamais.
-    from ..infrastructure.implementation.dev.in_memory_order_repository import (
-        InMemoryOrderRepository,
-    )
     from ..infrastructure.implementation.dev.order_generator import generate_labeled_orders
     from ..infrastructure.implementation.mlflow_tracker import MlflowTracker
+    from ..infrastructure.repository.in_memory_order_repository import (
+        InMemoryOrderRepository,
+    )
     from .learning.ml_pipeline import MLPipeline
     from .learning.ml_trainer import MLTrainer
     from .learning.train_test_splitter import TrainTestSplitter
-    from .training import TrainingService
+    from .training_service import TrainingService
 
     orders, labels = generate_labeled_orders(random_state=settings.random_seed)
     trainer = MLTrainer(

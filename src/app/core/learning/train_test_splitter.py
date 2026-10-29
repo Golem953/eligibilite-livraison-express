@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from sklearn.model_selection import train_test_split
 
-from ...domain.entities import OrderEntity
+from ...domain.entities.order_entity import OrderEntity
 from .order_feature import orders_to_dataframe
 
 logger = logging.getLogger(__name__)

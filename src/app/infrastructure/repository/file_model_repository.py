@@ -1,4 +1,4 @@
-"""`ModelRepository` de développement : le modèle dans un fichier `.joblib` local.
+"""`ModelRepositoryInterface` de développement : le modèle dans un fichier `.joblib` local.
 
 Le notebook (cellule 41) écrit `express_delivery_model.joblib` dans `artifacts/`, et la
 cellule 43 le relit avec `joblib.load`. Cette implémentation fait la même chose.
@@ -15,13 +15,13 @@ from pathlib import Path
 
 import joblib
 
-from ....domain.entities import ModelEntity
-from ....domain.ports import ModelRepository
+from ...domain.entities.model_entity import ModelEntity
+from ...domain.interface.model_repository_interface import ModelRepositoryInterface
 
 logger = logging.getLogger(__name__)
 
 
-class FileModelRepository(ModelRepository):
+class FileModelRepository(ModelRepositoryInterface):
     """Enregistre le modèle et sa fiche dans le système de fichiers local."""
 
     def __init__(self, model_path: str):

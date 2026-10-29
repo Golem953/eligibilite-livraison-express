@@ -30,7 +30,7 @@ from pathlib import Path
 
 from .config import Settings
 from .core.core import configure_logging
-from .domain.entities import OrderEntity
+from .domain.entities.order_entity import OrderEntity
 
 logger = logging.getLogger(__name__)
 

@@ -2,33 +2,12 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
+from fakes.fake_model import FakeModel
+from fakes.fake_tracker import FakeTracker
 
 from app.config import Settings
-from app.domain.entities import OrderEntity
-from app.domain.ports import ExperimentTracker
-
-
-class FakeModel:
-    """Modèle factice : renvoie toujours la même probabilité, sans entraînement."""
-
-    def __init__(self, probability: float):
-        self.probability = probability
-
-    def predict_proba(self, features):
-        return np.array([[1 - self.probability, self.probability]] * len(features))
-
-
-class FakeTracker(ExperimentTracker):
-    """Tracker factice : garde en mémoire ce qu'on lui envoie, sans MLflow."""
-
-    def __init__(self):
-        self.runs: list[dict] = []
-
-    def log_run(self, run_name, params, metrics, model) -> str:
-        self.runs.append({"run_name": run_name, "params": params, "metrics": metrics})
-        return f"run-{len(self.runs)}"
+from app.domain.entities.order_entity import OrderEntity
 
 
 @pytest.fixture

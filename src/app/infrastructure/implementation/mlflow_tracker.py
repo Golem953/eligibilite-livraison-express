@@ -1,7 +1,7 @@
-"""`ExperimentTracker` basé sur MLflow.
+"""`ExperimentTrackerInterface` basée sur MLflow.
 
 Seul module de l'application qui importe MLflow : le reste du code ne connaît que
-le port `ExperimentTracker`. L'emplacement des runs vient de la variable
+l'interface `ExperimentTrackerInterface`. L'emplacement des runs vient de la variable
 d'environnement `MLFLOW_TRACKING_URI`, lue par MLflow lui-même.
 """
 
@@ -10,10 +10,10 @@ from __future__ import annotations
 import mlflow
 import mlflow.sklearn
 
-from ...domain.ports import ExperimentTracker
+from ...domain.interface.experiment_tracker_interface import ExperimentTrackerInterface
 
 
-class MlflowTracker(ExperimentTracker):
+class MlflowTracker(ExperimentTrackerInterface):
     """Enregistre chaque entraînement comme un run MLflow."""
 
     def __init__(self, experiment_name: str):

@@ -22,7 +22,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ....domain.entities import OrderEntity
+from ....domain.entities.order_entity import OrderEntity
 
 
 def generate_labeled_orders(

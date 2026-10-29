@@ -4,8 +4,8 @@ from collections.abc import Sequence
 
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
-from ...domain.entities import OrderEntity
-from ...domain.ports import ExperimentTracker
+from ...domain.entities.order_entity import OrderEntity
+from ...domain.interface.experiment_tracker_interface import ExperimentTrackerInterface
 from .order_feature import FEATURE_COLUMNS
 from .train_test_splitter import TrainTestSplitter
 
@@ -19,7 +19,7 @@ class MLTrainer:
         self,
         model_pipeline,
         splitter: TrainTestSplitter,
-        tracker: ExperimentTracker,
+        tracker: ExperimentTrackerInterface,
     ):
         self.model_pipeline = model_pipeline
         self.splitter = splitter

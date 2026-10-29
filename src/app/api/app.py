@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse
 from ..config import Settings
 from ..core.core import build_prediction_service
 from ..core.learning.ml_predict import MLPredict
-from ..domain.entities import OrderEntity, PredictionEntity
+from ..domain.entities.order_entity import OrderEntity
+from ..domain.entities.prediction_entity import PredictionEntity
 
 logger = logging.getLogger(__name__)
 

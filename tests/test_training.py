@@ -9,12 +9,12 @@ from app.core.learning.ml_pipeline import MLPipeline
 from app.core.learning.ml_trainer import MLTrainer
 from app.core.learning.order_feature import FEATURE_COLUMNS, orders_to_dataframe
 from app.core.learning.train_test_splitter import TrainTestSplitter
-from app.core.training import TrainingService
-from app.infrastructure.implementation.dev.file_model_repository import FileModelRepository
-from app.infrastructure.implementation.dev.in_memory_order_repository import (
+from app.core.training_service import TrainingService
+from app.infrastructure.implementation.dev.order_generator import generate_labeled_orders
+from app.infrastructure.repository.file_model_repository import FileModelRepository
+from app.infrastructure.repository.in_memory_order_repository import (
     InMemoryOrderRepository,
 )
-from app.infrastructure.implementation.dev.order_generator import generate_labeled_orders
 
 
 @pytest.fixture

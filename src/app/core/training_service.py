@@ -3,31 +3,26 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from ..domain.entities import ModelEntity
-from ..domain.ports import ModelRepository, OrderRepository
+from ..domain.entities.model_entity import ModelEntity
+from ..domain.interface.model_repository_interface import ModelRepositoryInterface
+from ..domain.interface.order_repository_interface import OrderRepositoryInterface
 from .learning.ml_trainer import MLTrainer
 from .learning.order_feature import FEATURE_COLUMNS, TARGET_COLUMN
+from .training_result import TrainingResult
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class TrainingResult:
-    run_id: str
-    metrics: dict[str, float]
-
-
 class TrainingService:
-    """Orchestre un entraînement. Ne connaît que des ports, aucune technologie."""
+    """Orchestre un entraînement. Ne connaît que des interfaces, aucune technologie."""
 
     def __init__(
         self,
-        order_repository: OrderRepository,
+        order_repository: OrderRepositoryInterface,
         trainer: MLTrainer,
-        model_repository: ModelRepository,
+        model_repository: ModelRepositoryInterface,
         model_version: str,
         threshold: float,
     ):
