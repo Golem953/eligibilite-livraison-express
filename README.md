@@ -165,12 +165,15 @@ src/app/
 ├── api/app.py               API FastAPI
 ├── core/
 │   ├── core.py              racine de composition : assemble l'API et l'entraînement
-│   ├── training.py          cas d'usage « entraîner le modèle »
+│   ├── training_service.py  cas d'usage « entraîner le modèle »
+│   ├── training_result.py   résultat d'un entraînement
 │   └── learning/            pipeline, entraînement, prédiction, contrat des variables
 ├── domain/
-│   ├── entities.py          commande, prédiction, model card
-│   └── ports.py             interfaces : OrderRepository, ModelRepository, ExperimentTracker
-└── infrastructure/          implémentations : fichiers, mémoire, MLflow
+│   ├── entities/            commande, prédiction, model card (un fichier par classe)
+│   └── interface/           interfaces (ABC) : *_interface.py
+└── infrastructure/
+    ├── repository/          implémentations des repositories : mémoire, fichier
+    └── implementation/      MLflow, générateur de données de dev
 notebooks/                   notebook d'exploration d'origine
 order.json                   exemple de commande
 tests/                       tests pytest

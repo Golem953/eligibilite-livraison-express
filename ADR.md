@@ -11,7 +11,7 @@ L'API expose `POST /predict` : elle reçoit une commande, renvoie une prédictio
 
 Le seul stockage de commandes est `InMemoryOrderRepository`, un dictionnaire Python rempli au démarrage de l'entraînement avec les données du générateur synthétique. La commande `train` s'entraîne sur ces données générées. Elles disparaissent à l'arrêt du processus et ne sont pas partagées entre l'API et `train`, qui tournent dans deux processus distincts.
 
-L'interface `OrderRepository` (`domain/ports.py`) ne déclare que ce dont l'entraînement a besoin : `get_training_data()`. L'implémentation est choisie dans la racine de composition `core/core.py`.
+L'interface `OrderRepositoryInterface` (`domain/interface/`) ne déclare que ce dont l'entraînement a besoin : `get_training_data()`. L'implémentation est choisie dans la racine de composition `core/core.py`.
 
 Ce que le stockage doit permettre :
 
@@ -36,7 +36,7 @@ Ce que le stockage doit permettre :
 - **En dev, en mémoire** (`InMemoryOrderRepository`) : rien à installer, démarrage instantané. L'objectif est l'environnement de développement le plus rapide possible pour les futurs collaborateurs.
 - **En CI et en prod, PostgreSQL** : persistance, écritures concurrentes, données partagées entre l'API et l'entraînement, typage strict.
 - **En contrepartie de l'absence de contraintes en mémoire**, la CI exécute les mêmes tests sur les deux implémentations, et les données sont validées avant d'atteindre le repository.
-- **Le métier ne dépend pas du moteur** : l'API, l'entraînement et le domaine ne connaissent que l'abstraction `OrderRepository`. Seule l'implémentation PostgreSQL contient du SQL.
+- **Le métier ne dépend pas du moteur** : l'API, l'entraînement et le domaine ne connaissent que l'abstraction `OrderRepositoryInterface`. Seule l'implémentation PostgreSQL contient du SQL.
 
 #### Durée de vie des données en mémoire
 
@@ -54,7 +54,7 @@ C'est acceptable en dev, car les données sont synthétiques et regénérées au
 ### Conséquences
 
 - **Choix de l'implémentation par configuration** : à l'arrivée de PostgreSQL, une variable `ORDER_REPOSITORY_URL` (`memory://` ou `postgresql://…`) s'ajoutera à `Settings`, et la racine de composition `core/core.py` choisira l'implémentation selon sa valeur. Ce choix ne se fait nulle part ailleurs.
-- **Contrat du repository** : `get_training_data()` fait partie de l'interface `OrderRepository`. Les méthodes pour enregistrer une commande, sa prédiction et son label réel s'y ajouteront quand l'API les utilisera (YAGNI).
+- **Contrat du repository** : `get_training_data()` fait partie de l'interface `OrderRepositoryInterface`. Les méthodes pour enregistrer une commande, sa prédiction et son label réel s'y ajouteront quand l'API les utilisera (YAGNI).
 - **Identifiant obligatoire à l'enregistrement** : `order_id` est facultatif dans `OrderEntity`, et `InMemoryOrderRepository.save()` range la commande sous la clé `order_id`. Toutes les commandes sans identifiant écrasent donc la même entrée (`None`). L'API doit générer un identifiant avant d'enregistrer, ou le repository doit refuser une commande sans identifiant.
 - **Cycle complet testé uniquement avec PostgreSQL** : en dev, `train` s'entraîne sur les données générées, jamais sur les prédictions reçues par l'API. La chaîne prédiction → label réel → réentraînement ne se vérifie qu'avec PostgreSQL, en CI ou avec `docker compose` (ADR-0004).
 - **Un seul worker en dev** : l'API en mémoire tourne avec un seul worker uvicorn (déjà le cas avec `serve`), pour que toutes les requêtes voient les mêmes données.
@@ -63,7 +63,7 @@ C'est acceptable en dev, car les données sont synthétiques et regénérées au
 - **Outillage SQL et migrations** : SQLAlchemy et Alembic (déjà dans `requirements.txt`) pour l'implémentation PostgreSQL.
 - **Déploiement** : un serveur PostgreSQL fonctionne, que l'API et l'entraînement tournent sur une ou deux machines.
 - **Outillage** : DBeaver pour consulter la base PostgreSQL.
-- **Architecture** : l'accès aux commandes passe par l'interface `OrderRepository` de `domain/ports.py`. L'implémentation PostgreSQL va dans `infrastructure/implementation/` (par exemple `sql/sql_order_repository.py`). Passer de la mémoire à PostgreSQL revient à changer la configuration, sans toucher au métier ni à l'API.
+- **Architecture** : l'accès aux commandes passe par l'interface `OrderRepositoryInterface` de `domain/interface/`. L'implémentation PostgreSQL va dans `infrastructure/repository/` (par exemple `sql_order_repository.py`). Passer de la mémoire à PostgreSQL revient à changer la configuration, sans toucher au métier ni à l'API.
 
 ### Points restant ouverts (sans impact sur le choix du moteur)
 
@@ -148,7 +148,7 @@ Aucun service ne peut modifier la base d'un autre.
 - **Chaque entraînement est un run MLflow** (déjà le cas) : paramètres, métriques et modèle y sont enregistrés. Le modèle est en plus inscrit dans le Model Registry sous un nom unique (`registered_model_name`), et la version en production est désignée par un alias.
 - **La version vient du registre, plus de la configuration** : `MODEL_VERSION` disparaît. `PredictionEntity.model_version` et la model card (`ModelEntity`) portent la version du Model Registry. La version stockée avec chaque prédiction (ADR-0001) correspond donc à un modèle réellement retrouvable.
 - **Dépendance au démarrage** : l'API charge le modèle **une seule fois au démarrage** et le garde en mémoire (déjà le cas avec `build_prediction_service`). Elle ne sollicite pas MLflow à chaque prédiction.
-- **Architecture** : l'accès au modèle passe par l'interface `ModelRepository` de `domain/ports.py`, implémentée par une nouvelle classe `MlflowModelRepository`. Le suivi des entraînements passe déjà par l'interface `ExperimentTracker`, implémentée par `MlflowTracker`. `FileModelRepository` reste disponible pour les tests et le dev hors ligne. Le choix se fait dans `core/core.py`, selon la configuration. L'API et le métier ne dépendent pas directement de MLflow.
+- **Architecture** : l'accès au modèle passe par l'interface `ModelRepositoryInterface` de `domain/interface/`, implémentée par une nouvelle classe `MlflowModelRepository`. Le suivi des entraînements passe déjà par l'interface `ExperimentTrackerInterface`, implémentée par `MlflowTracker`. `FileModelRepository` reste disponible pour les tests et le dev hors ligne. Le choix se fait dans `core/core.py`, selon la configuration. L'API et le métier ne dépendent pas directement de MLflow.
 
 ### Points restant ouverts
 

@@ -52,30 +52,39 @@ src/app/
 ├── cli.py                       # serve, train, predict
 ├── config.py                    # configuration par environnement
 ├── domain/
-│   ├── entities.py              # commande, prédiction, model card
-│   └── ports.py                 # interfaces : OrderRepository, ModelRepository, ExperimentTracker
+│   ├── entities/
+│   │   ├── order_entity.py      # commande
+│   │   ├── prediction_entity.py # prédiction
+│   │   └── model_entity.py      # model card
+│   └── interface/               # interfaces (ABC)
+│       ├── order_repository_interface.py
+│       ├── model_repository_interface.py
+│       └── experiment_tracker_interface.py
 ├── core/
 │   ├── core.py                  # racine de composition
-│   ├── training.py              # cas d'usage « entraîner le modèle »
+│   ├── training_service.py      # cas d'usage « entraîner le modèle »
+│   ├── training_result.py       # résultat d'un entraînement
 │   └── learning/
 │       ├── ml_pipeline.py       # prétraitement + classifieur
 │       ├── ml_predict.py        # prédiction
 │       ├── ml_trainer.py        # entraînement et métriques
 │       ├── order_feature.py     # contrat des features
 │       └── train_test_splitter.py
-├── infrastructure/implementation/
-│   ├── mlflow_tracker.py        # suivi des entraînements avec MLflow
-│   └── dev/
-│       ├── order_generator.py
-│       ├── in_memory_order_repository.py
-│       └── file_model_repository.py
+├── infrastructure/
+│   ├── repository/              # implémentations des repositories
+│   │   ├── in_memory_order_repository.py
+│   │   └── file_model_repository.py
+│   └── implementation/
+│       ├── mlflow_tracker.py    # suivi des entraînements avec MLflow
+│       └── dev/
+│           └── order_generator.py
 └── api/
     └── app.py                   # FastAPI et endpoints
 ```
 
 | Couche | Question | Exemples |
 |---|---|---|
-| `domain` | Qu'est-ce qu'une commande ou prédiction, et de quoi l'application a-t-elle besoin ? | `OrderEntity`, `PredictionEntity`, ports |
+| `domain` | Qu'est-ce qu'une commande ou prédiction, et de quoi l'application a-t-elle besoin ? | `OrderEntity`, `PredictionEntity`, interfaces |
 | `core/learning` | Comment transformer les données et utiliser le modèle ? | `MLPipeline`, `MLPredict` |
 | `infrastructure` | Où sont les données et l'artefact ? | mémoire, fichier Joblib, MLflow |
 | `api` | Comment exposer le service HTTP ? | FastAPI, `/predict` |
@@ -107,7 +116,7 @@ flowchart TB
     CLI --> CONFIG
 ```
 
-Une couche de haut niveau ne devrait pas connaître plus que nécessaire les détails techniques d'une couche de bas niveau. `domain` est indépendant de FastAPI, pandas, Joblib et MLflow : il ne contient que les entités et les interfaces (ports). Seule la racine de composition `core.py` connaît les implémentations, et seuls les points d'entrée (`cli.py`, `api/app.py`) lisent la configuration.
+Une couche de haut niveau ne devrait pas connaître plus que nécessaire les détails techniques d'une couche de bas niveau. `domain` est indépendant de FastAPI, pandas, Joblib et MLflow : il ne contient que les entités (`domain/entities/`) et les interfaces (`domain/interface/`), une classe par fichier. Seule la racine de composition `core.py` connaît les implémentations, et seuls les points d'entrée (`cli.py`, `api/app.py`) lisent la configuration.
 
 ---
 
@@ -115,7 +124,7 @@ Une couche de haut niveau ne devrait pas connaître plus que nécessaire les dé
 
 ### `OrderEntity`
 
-`domain/entities.py` définit une commande sous forme de `dataclass(frozen=True)`.
+`domain/entities/order_entity.py` définit une commande sous forme de `dataclass(frozen=True)`.
 
 | Catégorie | Champs |
 |---|---|
@@ -242,12 +251,12 @@ Une pipeline unique garantit que les mêmes transformations sont appliquées à 
 ```mermaid
 sequenceDiagram
     participant TS as TrainingService
-    participant R as OrderRepository
+    participant R as OrderRepositoryInterface
     participant T as MLTrainer
     participant S as Splitter
     participant P as Pipeline
-    participant K as ExperimentTracker
-    participant F as ModelRepository
+    participant K as ExperimentTrackerInterface
+    participant F as ModelRepositoryInterface
     TS->>R: get_training_data()
     R-->>TS: orders, labels
     TS->>T: train(orders, labels)
@@ -260,7 +269,7 @@ sequenceDiagram
     TS->>F: save(pipeline, model_card)
 ```
 
-`MLTrainer` ne connaît pas MLflow : il passe par l'interface `ExperimentTracker`, implémentée par `MlflowTracker`. Les tests lui passent un tracker factice.
+`MLTrainer` ne connaît pas MLflow : il passe par l'interface `ExperimentTrackerInterface`, implémentée par `MlflowTracker`. Les tests lui passent un tracker factice.
 
 | Métrique | Question |
 |---|---|
@@ -304,20 +313,20 @@ Le seuil n'est pas le modèle. Le modèle produit un score ; le seuil traduit ce
 
 ## 11. Repositories et inversion de dépendance
 
-Les interfaces de `domain/ports.py` décrivent seulement les opérations dont l'application se sert.
+Les interfaces de `domain/interface/` décrivent seulement les opérations dont l'application se sert.
 
 | Interface | Méthodes | Implémentation lite | Limite |
 |---|---|---|---|
-| `OrderRepository` | `get_training_data()` | dictionnaire en mémoire | données perdues au redémarrage et non partagées |
-| `ModelRepository` | `save()`, `load()` | fichier local via Joblib | pas de registre complet ni de rollback |
-| `ExperimentTracker` | `log_run()` | MLflow | — |
+| `OrderRepositoryInterface` | `get_training_data()` | dictionnaire en mémoire | données perdues au redémarrage et non partagées |
+| `ModelRepositoryInterface` | `save()`, `load()` | fichier local via Joblib | pas de registre complet ni de rollback |
+| `ExperimentTrackerInterface` | `log_run()` | MLflow | — |
 
 ```mermaid
 flowchart TB
     APP[TrainingService, MLTrainer]
-    OR[OrderRepository<br/>port]
-    MR[ModelRepository<br/>port]
-    ET[ExperimentTracker<br/>port]
+    OR[OrderRepositoryInterface<br/>interface]
+    MR[ModelRepositoryInterface<br/>interface]
+    ET[ExperimentTrackerInterface<br/>interface]
     IM[InMemoryOrderRepository]
     FM[FileModelRepository]
     MT[MlflowTracker]
@@ -329,7 +338,7 @@ flowchart TB
     ET -. implémente .-> MT
 ```
 
-Remplacer le dictionnaire par PostgreSQL revient à écrire une nouvelle implémentation d'`OrderRepository` et à la choisir dans `core.py`, sans toucher à `TrainingService`, `MLTrainer` ni `MLPredict`. Une méthode ne s'ajoute à une interface que lorsqu'un utilisateur en a besoin (YAGNI).
+Remplacer le dictionnaire par PostgreSQL revient à écrire une nouvelle implémentation d'`OrderRepositoryInterface` et à la choisir dans `core.py`, sans toucher à `TrainingService`, `MLTrainer` ni `MLPredict`. Une méthode ne s'ajoute à une interface que lorsqu'un utilisateur en a besoin (YAGNI).
 
 ---
 
@@ -478,7 +487,8 @@ ruff check .
 
 ### Clean Code
 
-- noms explicites : `MLPredict`, `TrainTestSplitter`, `ModelRepository` ;
+- noms explicites : `MLPredict`, `TrainTestSplitter`, `ModelRepositoryInterface` ;
+- une classe par fichier ; les interfaces sont dans `domain/interface/` et portent le suffixe `Interface` ;
 - fonctions orientées vers une action identifiable ;
 - docstrings qui expliquent les décisions et les limites ;
 - seuil et graine configurables ;
@@ -491,9 +501,9 @@ ruff check .
 |---|---|
 | **S — Single Responsibility** | le splitter sépare ; le trainer entraîne ; le tracker journalise ; le service d'entraînement orchestre ; le predictor prédit ; le repository stocke ; `core.py` assemble |
 | **O — Open/Closed** | ajouter un repository SQL ou changer de classifieur ne modifie ni le trainer ni le service d'entraînement : le type de modèle est lu dans le pipeline |
-| **L — Liskov Substitution** | les implémentations respectent exactement leur interface : `TrainingService` n'appelle que des méthodes déclarées dans les ports |
-| **I — Interface Segregation** | chaque port ne déclare que ce que ses utilisateurs appellent |
-| **D — Dependency Inversion** | les classes reçoivent leurs dépendances (ports, configuration) au lieu de les créer ; `domain` ne dépend de rien |
+| **L — Liskov Substitution** | les implémentations respectent exactement leur interface : `TrainingService` n'appelle que des méthodes déclarées dans les interfaces |
+| **I — Interface Segregation** | chaque interface ne déclare que ce que ses utilisateurs appellent |
+| **D — Dependency Inversion** | les classes reçoivent leurs dépendances (interfaces, configuration) au lieu de les créer ; `domain` ne dépend de rien |
 
 ### KISS — Keep It Simple
 

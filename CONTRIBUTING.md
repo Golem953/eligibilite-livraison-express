@@ -185,7 +185,13 @@ Un commit = un changement cohérent. Ne mélangez pas une correction et un refor
 - **Respecter les couches** décrites dans [ARCHITECTURE-livraison-express-lite.md](ARCHITECTURE-livraison-express-lite.md) :
   - `domain/` ne dépend ni de FastAPI, ni de pandas, ni de MLflow ;
   - les classes concrètes (repositories, modèle) ne sont choisies que dans `core/core.py` ;
-  - l'API n'importe pas le code d'entraînement.
+  - l'API n'importe pas le code d'entraînement ;
+  - les classes reçoivent leur configuration et leurs dépendances en paramètre : seuls les points d'entrée créent `Settings`.
+- **Organisation des fichiers** :
+  - une classe par fichier, nommé d'après la classe (`OrderEntity` → `order_entity.py`) ;
+  - les interfaces (classes abstraites `ABC`) vont dans `domain/interface/`, et leur nom se termine par `Interface` (`OrderRepositoryInterface` → `order_repository_interface.py`) ;
+  - les implémentations de repositories vont dans `infrastructure/repository/`, les autres implémentations techniques dans `infrastructure/implementation/` ;
+  - une interface ne déclare que les méthodes que ses utilisateurs appellent.
 - **Les variables du modèle sont un contrat** : toute modification passe par `FEATURE_COLUMNS` dans `core/learning/order_feature.py`, et concerne à la fois l'entraînement et la prédiction.
 - **Aucun secret dans le code ni dans le dépôt.** La configuration passe par `config.py` et `.env`. Toute nouvelle variable est documentée dans `.env.example`.
 - **Ne pas modifier le notebook** `notebooks/project_test_v1_final_final2.ipynb` : c'est la trace de l'exploration d'origine.
