@@ -32,9 +32,10 @@ def trainer(fake_tracker):
 
 
 def test_trainer_produces_valid_metrics(trainer, small_dataset):
-    run_id, metrics = trainer.train(*small_dataset)
+    run_id, metrics, champion_metrics = trainer.train(*small_dataset)
 
     assert run_id == "run-1"
+    assert champion_metrics is None
     assert set(metrics) == {"accuracy", "precision", "recall", "f1_score", "roc_auc"}
     assert all(0.0 <= value <= 1.0 for value in metrics.values())
     # Le générateur a un vrai signal : un modèle qui n'apprend rien serait autour de 0,5.
@@ -42,7 +43,7 @@ def test_trainer_produces_valid_metrics(trainer, small_dataset):
 
 
 def test_trainer_reports_the_run_to_the_tracker(trainer, fake_tracker, small_dataset):
-    _, metrics = trainer.train(*small_dataset)
+    _, metrics, _ = trainer.train(*small_dataset)
 
     [run] = fake_tracker.runs
     assert run["run_name"] == "LogisticRegression"

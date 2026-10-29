@@ -72,14 +72,24 @@ def build_training_service(settings: Settings):
     """Assemble l'entraînement : source des commandes, pipeline, MLflow, fichier modèle."""
     # Imports locaux : seul l'entraînement en a besoin, l'API ne les charge jamais.
     from ..infrastructure.implementation.mlflow_tracker import MlflowTracker
+    from .learning.chronological_train_test_splitter import ChronologicalTrainTestSplitter
     from .learning.ml_pipeline import MLPipeline
     from .learning.ml_trainer import MLTrainer
     from .learning.train_test_splitter import TrainTestSplitter
+    from .promotion_policy import PromotionPolicy
     from .training_service import TrainingService
 
+    # Commandes de l'ERP : test sur les plus récentes, pour comparer le nouveau modèle et
+    # le modèle en service sur des commandes qu'aucun n'a vues (ADR-0009). En mémoire :
+    # découpage aléatoire du notebook.
+    splitter_class = (
+        TrainTestSplitter
+        if settings.training_source_url == "memory://"
+        else ChronologicalTrainTestSplitter
+    )
     trainer = MLTrainer(
         MLPipeline(random_seed=settings.random_seed).get_model_pipeline(),
-        TrainTestSplitter(random_seed=settings.random_seed),
+        splitter_class(random_seed=settings.random_seed),
         MlflowTracker(EXPERIMENT_NAME),
     )
     return TrainingService(
@@ -88,4 +98,8 @@ def build_training_service(settings: Settings):
         model_repository=FileModelRepository(settings.model_path),
         model_version=settings.model_version,
         threshold=settings.model_threshold,
+        promotion_policy=PromotionPolicy(
+            metric=settings.promotion_metric,
+            min_gain=settings.promotion_min_gain,
+        ),
     )

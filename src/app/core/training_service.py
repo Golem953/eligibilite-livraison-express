@@ -1,4 +1,5 @@
-"""Cas d'usage « entraîner le modèle » : lire les données, entraîner, enregistrer."""
+"""Cas d'usage « réentraîner le modèle » : lire les données, entraîner, comparer au
+modèle en service, et ne remplacer celui-ci que si le nouveau modèle est meilleur."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from ..domain.interface.model_repository_interface import ModelRepositoryInterfa
 from ..domain.interface.order_repository_interface import OrderRepositoryInterface
 from .learning.ml_trainer import MLTrainer
 from .learning.order_feature import FEATURE_COLUMNS, TARGET_COLUMN
+from .promotion_policy import PromotionPolicy
 from .training_result import TrainingResult
 
 logger = logging.getLogger(__name__)
@@ -25,17 +27,33 @@ class TrainingService:
         model_repository: ModelRepositoryInterface,
         model_version: str,
         threshold: float,
+        promotion_policy: PromotionPolicy | None = None,
     ):
         self._order_repository = order_repository
         self._trainer = trainer
         self._model_repository = model_repository
         self._model_version = model_version
         self._threshold = threshold
+        self._promotion_policy = promotion_policy or PromotionPolicy()
 
     def run(self) -> TrainingResult:
         orders, labels = self._order_repository.get_training_data()
         logger.info("Données prêtes (commandes=%d)", len(orders))
-        run_id, metrics = self._trainer.train(orders, labels)
+        if not orders:
+            raise ValueError("Aucune commande labellisée : rien à entraîner")
+
+        champion = self._model_repository.load()
+        run_id, metrics, champion_metrics = self._trainer.train(orders, labels, champion)
+
+        if not self._promotion_policy.should_promote(metrics, champion_metrics):
+            logger.info(
+                "Modèle en service conservé : %s %.4f (nouveau) <= %.4f (en service) + %.4f",
+                self._promotion_policy.metric,
+                metrics[self._promotion_policy.metric],
+                champion_metrics[self._promotion_policy.metric],
+                self._promotion_policy.min_gain,
+            )
+            return TrainingResult(run_id, metrics, champion_metrics, promoted=False)
 
         model_card = ModelEntity(
             project="livraison-express-lite",
@@ -50,4 +68,4 @@ class TrainingService:
         )
         self._model_repository.save(self._trainer.model_pipeline, model_card)
         logger.info("Modèle enregistré (version=%s, run_id=%s)", self._model_version, run_id)
-        return TrainingResult(run_id=run_id, metrics=metrics)
+        return TrainingResult(run_id, metrics, champion_metrics, promoted=True)

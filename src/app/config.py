@@ -40,3 +40,7 @@ class Settings(BaseSettings):
     # Source des commandes de l'entraînement (ADR-0009) : `memory://` (données
     # synthétiques) ou `mongodb://hôte:27017/livraison_express` (commandes de l'ERP).
     training_source_url: str = "memory://"
+    # Promotion (ADR-0010) : le nouveau modèle remplace le modèle en service seulement si
+    # cette métrique, mesurée sur le même jeu de test, le dépasse d'au moins ce gain.
+    promotion_metric: str = "f1_score"
+    promotion_min_gain: float = 0.0
