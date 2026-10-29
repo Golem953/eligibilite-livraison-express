@@ -141,7 +141,9 @@ L'ETL simulé alimente le MongoDB de test au format de l'ERP. L'entraînement le
 
 ### Pour la production
 
-Sur `main`, après la fusion et le tag, avec un fichier `.env.prod` copié depuis `.env.prod.example`. Rien n'est construit : `APP_VERSION` choisit l'image publiée par la CD. ```powershell
+Sur `main`, après la fusion et le tag, avec un fichier `.env.prod` copié depuis `.env.prod.example`. Rien n'est construit : `APP_VERSION` choisit l'image publiée par la CD.
+
+```powershell
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm train
 docker compose -f docker-compose.prod.yml --env-file .env.prod restart api
@@ -160,9 +162,24 @@ Sur le même poste, `TRAINING_SOURCE_URL=mongodb://host.docker.internal:27117/li
 
 Les étapes `test` et `prod` étant identiques, l'image validée en release est exactement celle qui part en production.
 
+### Réentraînement automatique (Airflow)
+
+Sur la machine de prod, à côté de `docker-compose.prod.yml`, avec un fichier `.env.airflow` copié depuis `.env.airflow.example` et ses secrets remplis :
+
+```powershell
+docker compose -f docker-compose.airflow.yml --env-file .env.airflow up -d --build
+```
+
+Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0010).
+
+- Interface : <http://127.0.0.1:8080>, compte `admin` et mot de passe `AIRFLOW_ADMIN_PASSWORD`. Depuis un poste, par tunnel SSH.
+- Lancer un entraînement sans attendre la nuit : bouton *Trigger* du DAG, ou `docker compose -f docker-compose.airflow.yml --env-file .env.airflow exec airflow-scheduler airflow dags trigger retrain_express_model`.
+- Forcer un entraînement sous le seuil : remettre la variable Airflow `retrain_last_labeled_orders` à `0`, puis déclencher le DAG.
+- Pour une nouvelle version de l'application, mettre à jour `APP_VERSION` dans `.env.prod` **et** dans `.env.airflow`.
+
 ### Règles pour les fichiers `.env.<environnement>`
 
-- Créez `.env.test` et `.env.prod` à partir de `.env.test.example` et `.env.prod.example`, sur la machine qui en a besoin.
+- Créez `.env.test`, `.env.prod` et `.env.airflow` à partir de leurs modèles `.env.*.example`, sur la machine qui en a besoin.
 - Ne laissez aucune clé vide : l'application refuse une valeur vide pour un nombre.
 - Ces fichiers sont lus par Compose, pas par l'application. Ne mettez pas `APP_ENV` dans le fichier `.env` lu par l'application : elle refuse les clés qu'elle ne connaît pas.
 - Les fichiers `.env.*` sont exclus de git (sauf `.env.example` et les modèles `.env.*.example`), car ceux de test et de prod contiennent des secrets.

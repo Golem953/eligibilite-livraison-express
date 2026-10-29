@@ -380,7 +380,7 @@ Raisons :
 
 - **Prérequis** : registre MLflow et version réelle du modèle (ADR-0002), enregistrement des prédictions (ADR-0001), reverse proxy sur le VPS pour le canary de l'image (ADR-0004).
 - **À implémenter** (rien n'est encore en place) :
-  - l'évaluation du champion sur le jeu de test du nouveau modèle, puis l'inscription avec l'alias `challenger` dans l'entraînement si le score est meilleur ;
+  - l'inscription avec l'alias `challenger` dans l'entraînement si le score est meilleur. La comparaison avec le champion est déjà faite par `train` (ADR-0010) ; en attendant le canary, le modèle promu remplace directement le champion ;
   - la variable `CANARY_PERCENT` dans `config.py` et `.env.example` ;
   - le chargement des deux versions et la répartition dans l'API (`MLPredict` reçoit les deux modèles, ou un service de routage les enveloppe) ;
   - un `order_id` toujours présent : il est facultatif dans `OrderEntity`, et l'API devra en générer un s'il est absent ;
@@ -687,7 +687,7 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 - **Choix par configuration** : la variable `TRAINING_SOURCE_URL` (`memory://` ou `mongodb://hôte:27017/livraison_express`) choisit l'implémentation dans la racine de composition `core/core.py` (`build_order_repository`). En dev, la source reste en mémoire.
 - **Validation à la lecture** : MongoDB n'impose aucun schéma. Chaque document est converti en `OrderEntity` : un champ absent, `null` ou de mauvais type écarte le document, compté dans les logs, jamais utilisé en silence. Les documents sans label (`express_eligible`) ne servent pas à l'entraînement.
 - **Conversion des dates** : `order_date` est lu en `datetime` et ramené à une date pour choisir les commandes les plus récentes du jeu de test.
-- **À implémenter** : l'évaluation du champion sur le même jeu de test que le nouveau modèle, et la règle de promotion.
+- **Comparaison et promotion** (implémentées, voir ADR-0010) : `train` évalue le modèle en service sur le jeu de test du nouveau modèle, et ne remplace le modèle que si le nouveau est meilleur (`PromotionPolicy`). Pour les commandes de l'ERP, le jeu de test est fait des 20 % de commandes arrivées en dernier (`ChronologicalTrainTestSplitter`) : elles sont toujours plus récentes que celles qui ont entraîné le modèle en service.
 - **Sécurité, dans la continuité de l'ADR-0008** :
   - un compte MongoDB en lecture seule sur `livraison_express.orders` pour l'entraînement (rôle `read`), à créer avec le mainteneur actuel avant son départ ;
   - l'authentification MongoDB activée en CI et en prod ;
@@ -700,7 +700,75 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 
 - **L'ETL de l'ERP écrit-il le label ?** Le MongoDB de l'ERP (simulé par `erp_prod_test`) ne contient aujourd'hui aucun label : sans lui, l'entraînement en prod reçoit 0 commande. Il faut savoir où le SI connaît le résultat réel des livraisons, et qui écrit l'ETL s'il n'existe pas.
 - **Nom du champ du label** : `express_eligible` est supposé, comme la cible du modèle et l'ETL simulé. À confirmer avec l'ERP, sinon changer `LABEL_FIELD` dans `mongo_order_repository.py`.
-- **Taille du jeu de test** de la comparaison (nombre de semaines les plus récentes) et **écart minimal** pour qu'un score soit jugé meilleur.
+- **Taille du jeu de test** de la comparaison (20 % des commandes aujourd'hui, ou un nombre de semaines) et **écart minimal** pour qu'un score soit jugé meilleur (`PROMOTION_MIN_GAIN`, 0 aujourd'hui).
 - **Récupérer l'historique 2015-2022** si les métriques montrent qu'il manque des données : un export ponctuel en lecture seule depuis PostgreSQL, en heures creuses, vers MongoDB. Il faut pour cela retrouver quelqu'un qui a les droits sur PostgreSQL.
 - **Qui reprend MongoDB** après le départ de l'alternant.
 - **Sauvegardes de MongoDB** : existent-elles aujourd'hui ? Sinon, un `mongodump` quotidien sur le modèle du `pg_dump` de l'ADR-0008.
+
+---
+
+## ADR-0010 — Comment orchestrer le réentraînement du modèle
+
+**Status :** Accepté
+**Date :** 29/10/2026
+
+### Contexte
+
+L'ETL de l'ERP ajoute en continu des commandes labellisées dans MongoDB (ADR-0009). Le modèle doit être réentraîné quand assez de nouvelles commandes sont arrivées, avec l'image de prod, puis remplacer le modèle en service seulement s'il est meilleur sur le même jeu de test.
+
+Aujourd'hui, `train` se lance à la main (`docker compose run --rm train`). Il ne se compare à rien et écrase le modèle en service. L'API ne charge le modèle qu'au démarrage : un nouveau modèle n'est servi qu'après un redémarrage.
+
+Contraintes :
+
+- **une seule machine**, sans orchestrateur de conteneurs (ADR-0004) ;
+- l'entraînement doit tourner **dans l'image de l'application**, pas dans l'orchestrateur : mêmes dépendances, même code qu'en prod (ADR-0003) ;
+- les échecs doivent être visibles et relancés, et chaque exécution doit laisser une trace.
+
+### Options considérées
+
+| Option | Avantage | Inconvénient |
+|---|---|---|
+| A. Cron et script sur le serveur | Aucun service en plus | Pas d'interface, pas d'historique, pas de relance. Les conditions (seuil de données, promotion, redémarrage) sont du shell difficile à tester |
+| B. Airflow | Standard du MLOps. Interface, historique des exécutions, relances, planification. `DockerOperator` lance l'image de l'application | Lourd : cinq services et une base PostgreSQL de métadonnées. Doit accéder au démon Docker |
+| C. Prefect | Plus léger (serveur et worker), flux en Python pur | Moins répandu, moins attendu dans un projet d'industrialisation |
+| D. Dagster | Pensé autour des données : recalcule le modèle quand les commandes changent | Logique (« assets ») plus longue à apprendre |
+
+### Décision
+
+**Option B : Airflow**, dans son propre compose (`docker-compose.airflow.yml`), sur la machine de prod.
+
+**Déclenchement : chaque nuit, et seulement s'il y a assez de nouvelles données.** Le DAG `retrain_express_model` tourne chaque nuit à 2 h. Il n'entraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` commandes labellisées (100 par défaut) sont arrivées depuis le dernier entraînement. Un sensor en continu aurait occupé une place d'exécution en permanence, pour une réactivité inutile : les labels arrivent par lots de l'ETL.
+
+| Tâche | Rôle |
+|---|---|
+| `enough_new_orders` | Compte les commandes labellisées dans MongoDB et compare au compte du dernier entraînement (variable Airflow `retrain_last_labeled_orders`). Sous le seuil : le reste du DAG est sauté |
+| `train` | Lance l'image de prod (`python -m app train`) avec `DockerOperator`, sur le volume du modèle de la prod |
+| `read_result` | Lit le résultat de `train`, écrit en JSON sur la dernière ligne de sa sortie |
+| `remember_order_count` | Retient le nombre de commandes, pour le seuil de la nuit suivante, que le modèle ait été promu ou non |
+| `model_promoted` puis `restart_api` | Redémarre l'API de prod, seulement si le modèle a changé |
+
+**La comparaison est dans l'application, pas dans Airflow.** `train` charge le modèle en service, l'évalue sur le même jeu de test que le nouveau modèle, et ne remplace le modèle que si la métrique `PROMOTION_METRIC` (`f1_score` par défaut) le dépasse d'au moins `PROMOTION_MIN_GAIN` (0 par défaut). Sans modèle en service, le nouveau est toujours promu. Les métriques du modèle en service sont aussi enregistrées dans le run MLflow (`champion_*`). Airflow ne fait qu'enchaîner : la règle se teste avec pytest, sans Airflow.
+
+Raisons :
+
+- **Airflow est le standard** de l'orchestration de pipelines de données et de ML : interface, historique, relances (deux, à cinq minutes d'intervalle) et alertes sans rien écrire.
+- **Les tâches lourdes ne tournent pas dans Airflow** : l'image d'Airflow ne contient ni scikit-learn ni le code de l'application, et l'entraînement tourne exactement comme en prod.
+- **LocalExecutor** suffit sur une machine : pas de Celery ni de Redis.
+
+### Conséquences
+
+- **Accès à Docker par un proxy** : le socket Docker donne les droits de root sur la machine. Airflow n'y accède qu'à travers `docker-proxy` (`tecnativa/docker-socket-proxy`), qui n'autorise que les conteneurs, les images, le démarrage et le redémarrage. Le proxy n'a pas de port publié.
+- **Le conteneur d'entraînement est moins durci** que dans les composes : `DockerOperator` ne permet pas `read_only` ni `cap_drop`. Il tourne quand même avec l'UID 1000, sans droits root.
+- **Secrets** : l'URL du MongoDB de l'ERP passe par `private_environment`, jamais affichée dans les logs ni l'interface. Les secrets d'Airflow (base, clé Fernet, JWT) sont dans `.env.airflow`, jamais versionné.
+- **Interface réservée à l'équipe** : port publié sur `127.0.0.1` uniquement, accès par tunnel SSH (ADR-0008), compte admin du gestionnaire FAB.
+- **Le DAG est actif dès son chargement** (`DAGS_ARE_PAUSED_AT_CREATION=false`). Au premier démarrage, Airflow lance aussitôt le run de la dernière nuit passée.
+- **Comportement de `train` en dev** : il se compare aussi au modèle existant. Avec les mêmes données synthétiques, le nouveau modèle est identique, donc pas meilleur : le modèle existant est conservé.
+- **Coût** : six conteneurs de plus sur la machine de prod (Airflow, sa base et le proxy Docker), qui doit avoir la mémoire nécessaire.
+- **Remplacement direct, pas de canary** : le modèle promu est servi à tout le trafic après le redémarrage de l'API. Le canary de l'ADR-0006 (alias `challenger`, `CANARY_PERCENT`) reste à implémenter. Le DAG inscrira alors le nouveau modèle comme challenger au lieu de redémarrer l'API.
+
+### Points restant ouverts
+
+- **Seuil** `RETRAIN_MIN_NEW_ORDERS` à ajuster au volume réel des labels de l'ETL.
+- **Alertes** en cas d'échec du DAG (e-mail, Slack).
+- **Coupure de l'API** de quelques secondes à chaque promotion, le temps du redémarrage. Le canary (ADR-0006) ou un rechargement à chaud la supprimeraient.
+- **Base de métadonnées** : PostgreSQL dédié à Airflow. Il pourra être partagé avec MLflow et les commandes (ADR-0001, ADR-0002) quand ce serveur PostgreSQL existera.
