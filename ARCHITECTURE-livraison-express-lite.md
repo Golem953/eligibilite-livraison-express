@@ -52,10 +52,18 @@ src/app/
 ├── cli.py                       # serve, train, predict
 ├── config.py                    # configuration par environnement
 ├── domain/
-│   ├── entities.py              # commande, prédiction, model card
-│   └── exceptions.py
+│   ├── entities/
+│   │   ├── order_entity.py      # commande
+│   │   ├── prediction_entity.py # prédiction
+│   │   └── model_entity.py      # model card
+│   └── interface/               # interfaces (ABC)
+│       ├── order_repository_interface.py
+│       ├── model_repository_interface.py
+│       └── experiment_tracker_interface.py
 ├── core/
 │   ├── core.py                  # racine de composition
+│   ├── training_service.py      # cas d'usage « entraîner le modèle »
+│   ├── training_result.py       # résultat d'un entraînement
 │   └── learning/
 │       ├── ml_pipeline.py       # prétraitement + classifieur
 │       ├── ml_predict.py        # prédiction
@@ -63,21 +71,22 @@ src/app/
 │       ├── order_feature.py     # contrat des features
 │       └── train_test_splitter.py
 ├── infrastructure/
-│   ├── order_repository.py      # interface de stockage des commandes
-│   ├── model_repository.py      # interface de stockage du modèle
-│   └── implementation/dev/
-│       ├── order_generator.py
-│       ├── in_memory_order_repository.py
-│       └── in_memory_model_repository.py
+│   ├── repository/              # implémentations des repositories
+│   │   ├── in_memory_order_repository.py
+│   │   └── file_model_repository.py
+│   └── implementation/
+│       ├── mlflow_tracker.py    # suivi des entraînements avec MLflow
+│       └── dev/
+│           └── order_generator.py
 └── api/
     └── app.py                   # FastAPI et endpoints
 ```
 
 | Couche | Question | Exemples |
 |---|---|---|
-| `domain` | Qu'est-ce qu'une commande ou prédiction ? | `OrderEntity`, `PredictionEntity` |
+| `domain` | Qu'est-ce qu'une commande ou prédiction, et de quoi l'application a-t-elle besoin ? | `OrderEntity`, `PredictionEntity`, interfaces |
 | `core/learning` | Comment transformer les données et utiliser le modèle ? | `MLPipeline`, `MLPredict` |
-| `infrastructure` | Où sont les données et l'artefact ? | mémoire, fichier Joblib |
+| `infrastructure` | Où sont les données et l'artefact ? | mémoire, fichier Joblib, MLflow |
 | `api` | Comment exposer le service HTTP ? | FastAPI, `/predict` |
 | `cli` | Comment lancer un job ou une prédiction ? | `serve`, `train`, `predict` |
 | `config` | Comment changer le comportement sans modifier le code ? | `.env`, variables |
@@ -101,13 +110,13 @@ flowchart TB
     CORE --> INFRA
     LEARNING --> DOMAIN
     CORE --> DOMAIN
-    LEARNING --> CONFIG
     INFRA --> DOMAIN
     API --> DOMAIN
     CORE --> CONFIG
+    CLI --> CONFIG
 ```
 
-Une couche de haut niveau ne devrait pas connaître plus que nécessaire les détails techniques d'une couche de bas niveau. Dans une architecture idéale, `domain` resterait indépendant de FastAPI, pandas, Joblib et MLflow. Dans cette version lite, la séparation est **partielle** : elle sert d'exemple minimal et de support de discussion.
+Une couche de haut niveau ne devrait pas connaître plus que nécessaire les détails techniques d'une couche de bas niveau. `domain` est indépendant de FastAPI, pandas, Joblib et MLflow : il ne contient que les entités (`domain/entities/`) et les interfaces (`domain/interface/`), une classe par fichier. Seule la racine de composition `core.py` connaît les implémentations, et seuls les points d'entrée (`cli.py`, `api/app.py`) lisent la configuration.
 
 ---
 
@@ -115,7 +124,7 @@ Une couche de haut niveau ne devrait pas connaître plus que nécessaire les dé
 
 ### `OrderEntity`
 
-`domain/entities.py` définit une commande sous forme de `dataclass(frozen=True)`.
+`domain/entities/order_entity.py` définit une commande sous forme de `dataclass(frozen=True)`.
 
 | Catégorie | Champs |
 |---|---|
@@ -166,8 +175,7 @@ flowchart LR
 
 Le générateur prend en compte distance, préparation, poids, zone, météo, stock, capacité, client premium, week-end et heure. Ce n'est pas une vérité métier réelle : c'est une **source de données pédagogique**.
 
-- `generate_labeled_orders()` retourne `(orders, labels)` pour l'entraînement ;
-- `generate_orders_dataset()` retourne seulement les commandes.
+`generate_labeled_orders()` retourne `(orders, labels)` pour l'entraînement.
 
 La cible ne doit pas devenir une feature : sinon le modèle reçoit directement la réponse qu'il doit prédire.
 
@@ -238,27 +246,30 @@ Une pipeline unique garantit que les mêmes transformations sont appliquées à 
 
 `TrainTestSplitter` vérifie que le nombre de commandes correspond au nombre de labels, construit le DataFrame, puis réalise un split 80/20 stratifié.
 
-`MLTrainer.train()` suit ce scénario :
+`TrainingService.run()` orchestre un entraînement, et `MLTrainer.train()` entraîne et évalue :
 
 ```mermaid
 sequenceDiagram
-    participant R as OrderRepository
+    participant TS as TrainingService
+    participant R as OrderRepositoryInterface
     participant T as MLTrainer
     participant S as Splitter
     participant P as Pipeline
-    participant M as MLflow
-    participant F as FileModelRepository
-    R->>T: orders, labels
+    participant K as ExperimentTrackerInterface
+    participant F as ModelRepositoryInterface
+    TS->>R: get_training_data()
+    R-->>TS: orders, labels
+    TS->>T: train(orders, labels)
     T->>S: split(...)
     S-->>T: train et test
-    T->>M: start_run()
-    T->>P: fit(train)
-    T->>P: predict(test)
-    T->>P: predict_proba(test)
-    P-->>T: prédictions et scores
-    T->>M: paramètres, métriques, modèle
-    T->>F: save(pipeline, model_card)
+    T->>P: fit(train), predict(test), predict_proba(test)
+    T->>K: log_run(paramètres, métriques, modèle)
+    K-->>T: run_id
+    T-->>TS: run_id, métriques
+    TS->>F: save(pipeline, model_card)
 ```
+
+`MLTrainer` ne connaît pas MLflow : il passe par l'interface `ExperimentTrackerInterface`, implémentée par `MlflowTracker`. Les tests lui passent un tracker factice.
 
 | Métrique | Question |
 |---|---|
@@ -302,48 +313,56 @@ Le seuil n'est pas le modèle. Le modèle produit un score ; le seuil traduit ce
 
 ## 11. Repositories et inversion de dépendance
 
-Les classes `OrderRepository` et `ModelRepository` décrivent les opérations nécessaires au reste de l'application.
+Les interfaces de `domain/interface/` décrivent seulement les opérations dont l'application se sert.
 
-| Abstraction | Implémentation lite | Limite |
-|---|---|---|
-| `OrderRepository` | dictionnaire en mémoire | données perdues au redémarrage et non partagées |
-| `ModelRepository` | fichier local via Joblib | pas de registre complet ni de rollback |
+| Interface | Méthodes | Implémentation lite | Limite |
+|---|---|---|---|
+| `OrderRepositoryInterface` | `save()`, `get()`, `get_training_data()` | dictionnaire en mémoire ; collection MongoDB de l'ERP (ADR-0009) | en mémoire : données perdues au redémarrage et non partagées |
+| `ModelRepositoryInterface` | `save()`, `load()` | fichier local via Joblib | pas de registre complet ni de rollback |
+| `ExperimentTrackerInterface` | `log_run()` | MLflow | — |
 
 ```mermaid
 flowchart TB
-    APP[Core et services ML]
-    OR[OrderRepository<br/>contrat]
-    MR[ModelRepository<br/>contrat]
+    APP[TrainingService, MLTrainer]
+    OR[OrderRepositoryInterface<br/>interface]
+    MR[ModelRepositoryInterface<br/>interface]
+    ET[ExperimentTrackerInterface<br/>interface]
     IM[InMemoryOrderRepository]
+    MO[MongoOrderRepository]
     FM[FileModelRepository]
+    MT[MlflowTracker]
     APP --> OR
     APP --> MR
+    APP --> ET
     OR -. implémente .-> IM
+    OR -. implémente .-> MO
     MR -. implémente .-> FM
+    ET -. implémente .-> MT
 ```
 
-L'objectif est de pouvoir remplacer le dictionnaire par PostgreSQL ou SQLite sans réécrire `MLPredict`. La version lite garde toutefois le choix des classes concrètes dans `Core`.
+Passer du dictionnaire aux commandes de l'ERP dans MongoDB revient à changer `TRAINING_SOURCE_URL` : `core.py` choisit l'implémentation d'`OrderRepositoryInterface`, sans toucher à `TrainingService`, `MLTrainer` ni `MLPredict`. Une méthode ne s'ajoute à une interface que lorsqu'un utilisateur en a besoin (YAGNI).
 
 ---
 
-## 12. `Core`, racine de composition
+## 12. `core.py`, racine de composition
 
-`core.py` assemble settings, repositories, pipeline, trainer et predictor.
+`core.py` est le seul endroit qui connaît les classes concrètes. Il propose un assemblage par point d'entrée, à partir d'une configuration reçue en paramètre :
 
 ```text
-Core(load_model=False)
-  ├─ repository des commandes en mémoire
-  ├─ pipeline non entraînée
-  ├─ MLTrainer
-  └─ MLPredict
+build_prediction_service(settings)        API et commande predict
+  ├─ FileModelRepository.load()
+  └─ MLPredict(modèle, seuil, version), ou None si aucun modèle
 
-Core(load_model=True)
-  ├─ repository des commandes en mémoire
-  ├─ charge le .joblib
-  └─ MLPredict, ou service indisponible
+build_training_service(settings)          commande train
+  ├─ build_order_repository(settings)    selon TRAINING_SOURCE_URL
+  │    ├─ memory://   InMemoryOrderRepository, rempli par save() avec le générateur
+  │    └─ mongodb://  MongoOrderRepository (commandes de l'ERP)
+  ├─ MLTrainer(pipeline, splitter, MlflowTracker)
+  ├─ FileModelRepository
+  └─ TrainingService
 ```
 
-Le chargement au démarrage évite de relire le fichier à chaque requête. Le code utilise aussi un singleton. C'est simple mais un état global peut compliquer les tests : configuration qui fuit, ordre d'exécution et parallélisme. Une évolution possible est une factory qui construit explicitement un contexte par application.
+Le chargement au démarrage évite de relire le fichier à chaque requête. Il n'y a ni singleton ni état global : chaque point d'entrée crée sa configuration et ses objets, et les tests construisent les leurs. L'assemblage de l'entraînement importe MLflow à l'intérieur de la fonction : l'API ne le charge jamais (ADR-0003).
 
 ---
 
@@ -397,24 +416,25 @@ Exemple de réponse :
 ## 14. CLI et scénarios
 
 ```bash
-python -m livraison_express train
-python -m livraison_express serve
-python -m livraison_express predict --file order.json
+python -m src.app train
+python -m src.app serve
+python -m src.app predict --file order.json
 ```
 
 ### Entraînement
 
 ```text
-CLI → Core() → get_training_data()
-    → MLTrainer.train()
-    → MLflow + FileModelRepository.save()
+CLI → Settings() → build_training_service(settings)
+    → TrainingService.run() → get_training_data()
+    → MLTrainer.train() → MlflowTracker.log_run()
+    → FileModelRepository.save()
 ```
 
 ### Serveur
 
 ```text
 CLI → uvicorn → create_app()
-    → Core(load_model=True)
+    → build_prediction_service(settings)
     → modèle chargé une fois
     → requêtes HTTP
 ```
@@ -423,7 +443,7 @@ CLI → uvicorn → create_app()
 
 ```text
 CLI → lecture JSON → OrderEntity
-    → Core(load_model=True) → MLPredict.predict()
+    → build_prediction_service(settings) → MLPredict.predict()
     → JSON sur stdout
 ```
 
@@ -436,14 +456,13 @@ L'entraînement est une commande CLI plutôt qu'un endpoint public : il consomme
 `config.py` utilise `pydantic-settings`. Les valeurs viennent des variables d'environnement ou de `.env`, avec des valeurs par défaut.
 
 ```dotenv
-ENVIRONMENT=local
 MODEL_PATH=notebooks/artifacts/express_delivery_model.joblib
 MODEL_THRESHOLD=0.5
 MODEL_VERSION=1.0.0
 LOG_LEVEL=INFO
 ```
 
-La configuration varie selon l'environnement sans modifier le code métier. Le fichier `.env` ne doit pas contenir de secret versionné ; `.env.example` documente le contrat.
+La configuration est lue une seule fois par point d'entrée (`cli.py`), puis passée aux classes qui en ont besoin : aucune classe métier ne lit `Settings` elle-même. Elle varie selon l'environnement sans modifier le code métier. Le fichier `.env` ne doit pas contenir de secret versionné ; `.env.example` documente le contrat.
 
 ---
 
@@ -472,25 +491,23 @@ ruff check .
 
 ### Clean Code
 
-- noms explicites : `MLPredict`, `TrainTestSplitter`, `ModelRepository` ;
+- noms explicites : `MLPredict`, `TrainTestSplitter`, `ModelRepositoryInterface` ;
+- une classe par fichier ; les interfaces sont dans `domain/interface/` et portent le suffixe `Interface` ;
 - fonctions orientées vers une action identifiable ;
 - docstrings qui expliquent les décisions et les limites ;
 - seuil et graine configurables ;
 - erreurs non masquées silencieusement.
 
-Amélioration possible : homogénéiser les noms et supprimer les imports historiques `src...` dans le package installé.
 
 ### SOLID
 
 | Principe | Illustration |
 |---|---|
-| **S — Single Responsibility** | le splitter sépare ; le trainer entraîne ; le predictor prédit ; le repository stocke |
-| **O — Open/Closed** | ajouter un repository SQL ne devrait pas modifier le trainer |
-| **L — Liskov Substitution** | toute implémentation respecte le contrat du repository |
-| **I — Interface Segregation** | les abstractions exposent les opérations nécessaires |
-| **D — Dependency Inversion** | `Core` centralise les choix et les services utilisent des contrats |
-
-L'application est pragmatique mais pas parfaite : `Core` connaît directement les implémentations et le singleton ajoute un état global. Ce sont de bons axes de discussion.
+| **S — Single Responsibility** | le splitter sépare ; le trainer entraîne ; le tracker journalise ; le service d'entraînement orchestre ; le predictor prédit ; le repository stocke ; `core.py` assemble |
+| **O — Open/Closed** | ajouter un repository SQL ou changer de classifieur ne modifie ni le trainer ni le service d'entraînement : le type de modèle est lu dans le pipeline |
+| **L — Liskov Substitution** | les implémentations respectent exactement leur interface : `TrainingService` n'appelle que des méthodes déclarées dans les interfaces |
+| **I — Interface Segregation** | chaque interface ne déclare que ce que ses utilisateurs appellent |
+| **D — Dependency Inversion** | les classes reçoivent leurs dépendances (interfaces, configuration) au lieu de les créer ; `domain` ne dépend de rien |
 
 ### KISS — Keep It Simple
 
@@ -502,7 +519,7 @@ La version lite ne fournit pas encore historique complet des prédictions, base 
 
 ### DRY — Don't Repeat Yourself
 
-Les colonnes sont définies une fois dans `order_feature.py`. La conversion commande → DataFrame est réutilisée. Le générateur sépare sortie labellisée et non labellisée sans dupliquer sa logique.
+Les colonnes sont définies une fois dans `order_feature.py`. La conversion commande → DataFrame est réutilisée. La fiche du modèle reprend `FEATURE_COLUMNS` au lieu de recopier la liste.
 
 ---
 
@@ -511,12 +528,11 @@ Les colonnes sont définies une fois dans `order_feature.py`. La conversion comm
 La version lite est pédagogique. Ses limites sont :
 
 1. les commandes en mémoire sont perdues au redémarrage ;
-2. le singleton complique configuration et tests parallèles ;
-3. le modèle est local, sans rollback ;
-4. le contrat HTTP est minimal ;
-5. authentification, autorisation et rate limiting ne sont pas traités ;
-6. supervision et dérive des données restent à construire ;
-7. la version du modèle est une métadonnée, pas encore une vraie résolution de versions.
+2. le modèle est local, sans rollback ;
+3. le contrat HTTP est minimal ;
+4. authentification, autorisation et rate limiting ne sont pas traités ;
+5. supervision et dérive des données restent à construire ;
+6. la version du modèle est une métadonnée, pas encore une vraie résolution de versions.
 
 ```mermaid
 flowchart LR
@@ -540,7 +556,7 @@ Chaque étape doit être motivée par un besoin, testée par un contrat et docum
 5. Quelle différence entre probabilité et décision ?
 6. Pourquoi l'entraînement est-il une commande CLI ?
 7. Que changer pour remplacer le dictionnaire par PostgreSQL ?
-8. Quels problèmes le singleton peut-il créer en test ?
+8. Pourquoi les classes reçoivent-elles leur configuration au lieu de la lire ?
 9. Quels éléments relèvent de YAGNI plutôt que d'un oubli ?
 
 ---

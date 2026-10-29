@@ -2,7 +2,7 @@ from collections.abc import Iterable
 
 import pandas as pd
 
-from ...domain.entities import OrderEntity
+from ...domain.entities.order_entity import OrderEntity
 
 TARGET_COLUMN = "express_eligible"
 

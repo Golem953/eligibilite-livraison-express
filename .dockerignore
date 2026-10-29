@@ -20,6 +20,9 @@ artifacts/
 mlruns/
 mlflow.db
 
+# ETL simulé : il ne fait pas partie de l'application
+etl_simulator/
+
 # Éditeurs
 .idea/
 .vscode/

@@ -1,14 +1,13 @@
-# Pile de livraison-express-lite (ADR-0004).
+# Environnement de développement de livraison-express-lite (ADR-0004).
 #
 #   docker compose --env-file .env.dev up -d --build    API + interface MLflow
 #   docker compose --env-file .env.dev run --rm train   entraîne le modèle
 #   docker compose --env-file .env.dev restart api      sert le nouveau modèle
 #
-# Chaque environnement a son fichier .env.<APP_ENV>. APP_ENV y choisit l'étape du
-# Dockerfile, selon la branche (voir CONTRIBUTING.md) :
-#   dev   (défaut) sur son poste, branches feat/* et dev   -> .env.dev
-#   test           branche release/<version>               -> .env.test
-#   prod           branche main                            -> .env.prod
+# Chaque environnement a son compose et son fichier de variables (voir CONTRIBUTING.md) :
+#   dev   sur son poste, branches feat/* et dev   -> docker-compose.yml       + .env.dev
+#   test  branche release/<version>               -> docker-compose.test.yml  + .env.test
+#   prod  branche main                            -> docker-compose.prod.yml  + .env.prod
 #
 # Une clé absente ou vide prend la valeur par défaut indiquée après « :- ».
 
@@ -37,11 +36,11 @@ x-app: &app
   # sans capacités, root ne pourrait pas écrire dans le volume qui appartient à l'UID 1000.
   user: "1000:1000"
   environment:
-    ENVIRONMENT: ${APP_ENV:-dev}
     MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
     MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
     RANDOM_SEED: ${RANDOM_SEED:-42}
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    TRAINING_SOURCE_URL: ${TRAINING_SOURCE_URL:-memory://}
     # Modèle et runs MLflow sur le volume partagé, pour qu'ils survivent aux conteneurs.
     MODEL_PATH: /data/artifacts/express_delivery_model.joblib
     MLFLOW_TRACKING_URI: /data/mlruns
@@ -118,5 +117,48 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  # --- Dev uniquement : un MongoDB et un ETL simulés à la place de ceux de l'ERP (ADR-0009) ---
+  #   docker compose --env-file .env.dev --profile etl up -d --build
+  #   TRAINING_SOURCE_URL=mongodb://mongodb:27017/livraison_express dans .env.dev, puis train.
+  # En prod, ces deux services n'existent pas : l'entraînement lit le MongoDB de l'ERP.
+  mongodb:
+    <<: *hardening
+    image: mongo:8.3.13@sha256:e16e606f792ea89d2b4907b54e5e31eb86a7a23e27231dce3a982cc8f2d73cd2
+    # Utilisateur mongodb de l'image : propriétaire des dossiers de données d'un volume neuf.
+    user: "999:999"
+    profiles: ["etl"]
+    volumes:
+      - mongo_dev_data:/data/db
+      - mongo_dev_config:/data/configdb
+    ports:
+      # 27018 : le port 27017 reste libre pour le MongoDB de l'ERP simulé.
+      - "127.0.0.1:${MONGO_PORT:-27018}:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  etl-simulator:
+    <<: *hardening
+    build:
+      context: ./etl_simulator
+    image: livraison-express-etl-simulator:dev
+    profiles: ["etl"]
+    environment:
+      MONGO_URI: mongodb://mongodb:27017/livraison_express
+      HISTORY_ORDERS: ${ETL_HISTORY_ORDERS:-3000}
+      BATCH_SIZE: ${ETL_BATCH_SIZE:-5}
+      INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-5}
+      LIVE_ORDER_LIMIT: ${ETL_LIVE_ORDER_LIMIT:-0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   app_data:
+  mongo_dev_data:
+  mongo_dev_config:

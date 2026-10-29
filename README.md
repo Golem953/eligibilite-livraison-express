@@ -11,7 +11,7 @@ Une commande est décrite par sa distance, son poids, son montant, la météo, l
 | Document | Contenu |
 |---|---|
 | [ARCHITECTURE-livraison-express-lite.md](ARCHITECTURE-livraison-express-lite.md) | Organisation du code, flux de données, pipeline ML, API |
-| [ADR.md](ADR.md) | Décisions d'architecture (stockage, MLflow, déploiement, sécurité) |
+| [ADR.md](ADR.md) | Décisions d'architecture (stockage, MLflow, déploiement, sécurité, source des données, orchestration) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Branches, commits, revue de code |
 | [SECURITY.md](SECURITY.md) | Signaler une vulnérabilité |
 
@@ -42,7 +42,6 @@ Copier `.env.example` en `.env`. Une clé laissée vide prend la valeur par déf
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `ENVIRONMENT` | `local` | `local`, `test` ou `prod` |
 | `MODEL_PATH` | `notebooks/artifacts/express_delivery_model.joblib` | Fichier du modèle écrit par `train` et lu par l'API |
 | `MODEL_THRESHOLD` | `0.5` | Seuil de probabilité au-delà duquel la commande est éligible |
 | `MODEL_VERSION` | `1.0.0` | Version renvoyée dans chaque prédiction |
@@ -165,10 +164,16 @@ src/app/
 ├── config.py                configuration lue depuis l'environnement et .env
 ├── api/app.py               API FastAPI
 ├── core/
-│   ├── core.py              assemblage des composants
+│   ├── core.py              racine de composition : assemble l'API et l'entraînement
+│   ├── training_service.py  cas d'usage « entraîner le modèle »
+│   ├── training_result.py   résultat d'un entraînement
 │   └── learning/            pipeline, entraînement, prédiction, contrat des variables
-├── domain/entities.py       commande, prédiction, model card
-└── infrastructure/          abstractions de stockage et implémentations de dev
+├── domain/
+│   ├── entities/            commande, prédiction, model card (un fichier par classe)
+│   └── interface/           interfaces (ABC) : *_interface.py
+└── infrastructure/
+    ├── repository/          implémentations des repositories : mémoire, fichier
+    └── implementation/      MLflow, générateur de données de dev
 notebooks/                   notebook d'exploration d'origine
 order.json                   exemple de commande
 tests/                       tests pytest
@@ -189,10 +194,10 @@ pytest
 | `test_order_feature.py` | Le contrat des variables du modèle : mêmes colonnes, même ordre, `order_id` exclu |
 | `test_order_generator.py` | Le générateur de données : reproductible, labels binaires, identifiants uniques |
 | `test_ml_predict.py` | La décision selon le seuil, l'arrondi de la probabilité, la version et l'horodatage |
-| `test_api.py` | Les routes, les statuts 200/503/422 et le contrat de réponse de `/predict` |
-| `test_training.py` | Un entraînement complet, la qualité minimale du modèle et la sauvegarde puis le rechargement |
+| `test_api.py` | Les routes, les statuts 200/503/422, le contrat de réponse de `/predict`, et l'isolation de l'API (elle n'importe ni MLflow ni le code d'entraînement) |
+| `test_training.py` | L'entraînement et ses métriques, le service d'entraînement, les stockages du modèle et des commandes, puis l'assemblage complet de bout en bout |
 
-Les tests de l'API et de la prédiction utilisent un modèle factice : ils sont rapides et ne dépendent pas de l'entraînement.
+Les classes reçoivent leurs dépendances au lieu de les créer : les tests leur passent un modèle ou un tracker MLflow factice. Ils sont rapides et ne dépendent pas d'un entraînement préalable.
 
 ## CI/CD
 
@@ -233,7 +238,7 @@ L'essentiel de ce qui reste vient de `scipy`, `pandas`, `scikit-learn` et `numpy
 - **Image de base figée** par version exacte et empreinte (`python:3.13.18-slim@sha256:…`) : deux builds produisent la même image.
 - **Aucun secret** : `.env` est exclu par `.dockerignore`, aucun mot de passe dans `ENV`.
 
-**Au lancement (`docker-compose.yml`), pour tous les services :**
+**Au lancement (`docker-compose.yml`, `docker-compose.test.yml`, `docker-compose.prod.yml`), pour tous les services :**
 
 - **Système de fichiers en lecture seule** (`read_only`) : seuls le volume `/data` et `/tmp` sont modifiables.
 - **Aucune capacité Linux** (`cap_drop: ALL`) ; `init-volume` ne récupère que `CHOWN`.
