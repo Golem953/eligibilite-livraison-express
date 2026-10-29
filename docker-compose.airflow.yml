@@ -1,0 +1,138 @@
+# Orchestrateur de réentraînement : Airflow (ADR-0010).
+#
+#   docker compose -f docker-compose.airflow.yml --env-file .env.airflow up -d --build
+#   Interface : http://127.0.0.1:8080 (compte admin, mot de passe AIRFLOW_ADMIN_PASSWORD)
+#
+# Tourne sur la machine de prod, à côté de docker-compose.prod.yml. Le DAG
+# `retrain_express_model` (airflow/dags/) réentraîne le modèle chaque nuit si assez de
+# nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image
+# de prod, puis redémarre l'API de prod si le modèle a changé.
+#
+# Exécuteur LocalExecutor : les tâches tournent dans le scheduler, sans Celery ni Redis.
+# Les tâches lourdes ne tournent pas dans Airflow : `train` est un conteneur de l'image
+# de l'application, lancé par Airflow à travers `docker-proxy`.
+#
+# Modèle des variables : .env.airflow.example. Les secrets n'ont pas de valeur par
+# défaut : sans eux, Compose refuse de démarrer.
+
+name: livraison-express-airflow
+
+x-airflow: &airflow
+  build:
+    context: ./airflow
+  image: livraison-express-airflow:3.3.2
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    # Le DAG est actif dès son chargement : déployer l'orchestrateur, c'est l'activer.
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD:?AIRFLOW_DB_PASSWORD manquant}@airflow-postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?AIRFLOW_FERNET_KEY manquant}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?AIRFLOW_JWT_SECRET manquant}
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:?AIRFLOW_API_SECRET_KEY manquant}
+    # Configuration du DAG retrain_express_model.
+    RETRAIN_APP_IMAGE: ghcr.io/golem953/eligibilite-livraison-express:${APP_VERSION:?APP_VERSION manquant (par exemple 0.2.0)}
+    RETRAIN_TRAINING_SOURCE_URL: ${TRAINING_SOURCE_URL:?TRAINING_SOURCE_URL manquant (MongoDB de l'ERP)}
+    RETRAIN_MIN_NEW_ORDERS: ${RETRAIN_MIN_NEW_ORDERS:-100}
+    RETRAIN_SCHEDULE: ${RETRAIN_SCHEDULE:-0 2 * * *}
+    RETRAIN_PROMOTION_METRIC: ${PROMOTION_METRIC:-f1_score}
+    RETRAIN_PROMOTION_MIN_GAIN: ${PROMOTION_MIN_GAIN:-0.0}
+    RETRAIN_DOCKER_URL: tcp://docker-proxy:2375
+    RETRAIN_MODEL_VOLUME: livraison-express-prod_app_data
+    RETRAIN_API_CONTAINER: livraison-express-prod-api-1
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags:ro
+    - airflow_logs:/opt/airflow/logs
+  # Le MongoDB de l'ERP est joint par son adresse, comme depuis docker-compose.prod.yml.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  security_opt:
+    - no-new-privileges:true
+  depends_on:
+    airflow-init:
+      condition: service_completed_successfully
+
+services:
+  airflow-postgres:
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:?AIRFLOW_DB_PASSWORD manquant}
+    volumes:
+      - airflow_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  # Crée ou met à jour le schéma de la base, puis le compte administrateur.
+  airflow-init:
+    <<: *airflow
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >-
+        airflow db migrate &&
+        (airflow users list | grep -qw admin ||
+        airflow users create --username admin --password "$${AIRFLOW_ADMIN_PASSWORD}"
+        --firstname Admin --lastname Airflow --email admin@example.com --role Admin)
+    environment:
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD:?AIRFLOW_DB_PASSWORD manquant}@airflow-postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?AIRFLOW_FERNET_KEY manquant}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD manquant}
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow
+    command: ["api-server"]
+    ports:
+      # Réservé à l'équipe, par tunnel SSH (ADR-0008).
+      - "127.0.0.1:${AIRFLOW_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow
+    command: ["scheduler"]
+    restart: unless-stopped
+
+  airflow-dag-processor:
+    <<: *airflow
+    command: ["dag-processor"]
+    restart: unless-stopped
+
+  # Seul accès d'Airflow à Docker. Le socket Docker donne les droits de root sur la
+  # machine : le proxy n'autorise que ce dont le DAG a besoin (créer, lancer, lire et
+  # supprimer un conteneur, récupérer une image, redémarrer l'API). Pas de port publié.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 1
+      ALLOW_START: 1
+      ALLOW_RESTARTS: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  airflow_db:
+  airflow_logs:
