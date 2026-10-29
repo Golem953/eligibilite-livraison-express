@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: livraison_express
+      POSTGRES_USER: livraison
+      POSTGRES_PASSWORD: livraison
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_erp_data:/var/lib/postgresql/data
+      - ./docker/erp/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U livraison -d livraison_express"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongodb:
+    image: mongo:8
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_erp_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' localhost:27017/test | grep 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  erp-simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.erp-simulator
+    environment:
+      POSTGRES_DSN: postgresql://livraison:livraison@postgres:5432/livraison_express
+      MONGO_URI: mongodb://mongodb:27017
+      BATCH_SIZE: ${BATCH_SIZE:-5}
+      INTERVAL_SECONDS: ${INTERVAL_SECONDS:-5}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_HISTORY_ORDERS: ${POSTGRES_HISTORY_ORDERS:-10000}
+      RECENT_HISTORY_ORDERS: ${RECENT_HISTORY_ORDERS:-1000}
+      LIVE_ORDER_LIMIT: ${LIVE_ORDER_LIMIT:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+
+volumes:
+  postgres_erp_data:
+  mongo_erp_data:
