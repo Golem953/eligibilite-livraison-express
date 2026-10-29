@@ -2,7 +2,8 @@
 #
 # Dépendances directes (ce que le code importe) :
 #   fastapi, uvicorn, pydantic, pydantic-settings, scikit-learn, pandas, numpy,
-#   joblib, mlflow-skinny (MLflow sans son serveur), skops (format de modèle MLflow).
+#   joblib, mlflow-skinny (MLflow sans son serveur), skops (format de modèle MLflow),
+#   pymongo (commandes de l'ERP, ADR-0009).
 # Tout le reste est installé par ces paquets.
 #
 # Pour régénérer après un changement de version, dans l'image de base du Dockerfile :
@@ -20,6 +21,7 @@ click==8.5.0
 cloudpickle==3.1.2
 cryptography==50.0.2
 databricks-sdk==0.157.0
+dnspython==2.9.0
 fastapi==0.142.2
 gitdb==4.0.12
 GitPython==3.2.1
@@ -45,6 +47,7 @@ pycparser==3.12
 pydantic==2.13.5
 pydantic-settings==2.15.0
 pydantic_core==2.46.5
+pymongo==4.15.3
 python-dateutil==3.0.0
 python-dotenv==1.2.4
 PyYAML==6.0.3

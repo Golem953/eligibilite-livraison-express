@@ -3,16 +3,14 @@ from collections.abc import Sequence
 
 from sklearn.model_selection import train_test_split
 
-from ...config import Settings
-from ...domain.entities import OrderEntity
+from ...domain.entities.order_entity import OrderEntity
 from .order_feature import orders_to_dataframe
 
 logger = logging.getLogger(__name__)
 
+
 class TrainTestSplitter:
-    def __init__(self, random_seed: int | None = None):
-        if random_seed is None:
-            random_seed = Settings().random_seed
+    def __init__(self, random_seed: int):
         self.random_seed = random_seed
 
     def split(
@@ -40,5 +38,3 @@ class TrainTestSplitter:
             X_train.shape[1],
         )
         return split
-
-    split_data = split
