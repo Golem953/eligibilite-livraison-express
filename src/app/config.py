@@ -14,7 +14,8 @@ class Settings(BaseSettings):
 
     Les noms de champs correspondent aux clés de `.env.example`. Avec
     `SettingsConfigDict(env_file=".env")`, pydantic lit les variables d'environnement
-    en priorité sur le fichier `.env`.
+    en priorité sur le fichier `.env`. Une clé vide (`MODEL_THRESHOLD=`) prend la
+    valeur par défaut.
 
     Elle est créée une seule fois par point d'entrée, puis passée aux classes qui en
     ont besoin : aucune classe métier ne lit la configuration elle-même.
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
     )
 
     # Graine aléatoire
