@@ -127,7 +127,7 @@ Quatre workflows GitHub Actions, dans `.github/workflows/` :
 
 | Workflow | Déclenchement | Étapes |
 |---|---|---|
-| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff, pytest, build de l'image `prod` (sans publication) |
+| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff, pytest. Build de l'image `prod` (sans publication) **uniquement sur `release/*` et `hotfix/*`** : aucune image n'est construite avant la release |
 | `origine.yml` | pull request vers `main` | Refuse toute branche source autre que `release/x.y.z` ou `hotfix/x.y.z`, ou une version déjà taguée |
 | `release.yml` (bouton) | *Actions → Release → Run workflow* | Calcule la version depuis le dernier tag, crée `release/x.y.z` sur `dev` et ouvre la PR vers `main` |
 | `cd.yml` (CD) | push sur `main`, c'est-à-dire le merge d'une `release/` ou d'un `hotfix/` | Version lue dans le nom de la branche, CI complète, publication de l'image sur ghcr.io, tag `vx.y.z`, release GitHub, suppression de la branche ; après un hotfix, PR de report vers `dev` |
