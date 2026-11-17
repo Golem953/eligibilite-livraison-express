@@ -1,14 +1,8 @@
-# Pile de livraison-express-lite (ADR-0004).
+# Production (branche main) : rien n'est construit, on déploie l'image publiée par la
+# CD sur GitHub Container Registry. IMAGE_TAG (dans .env.prod) donne la version exacte.
 #
-#   docker compose --env-file .env.dev up -d --build    API + interface MLflow
-#   docker compose --env-file .env.dev run --rm train   entraîne le modèle
-#   docker compose --env-file .env.dev restart api      sert le nouveau modèle
-#
-# Chaque environnement a son fichier .env.<APP_ENV>. APP_ENV y choisit l'étape du
-# Dockerfile, selon la branche (voir CONTRIBUTING.md) :
-#   dev   (défaut) sur son poste, branches feat/* et dev   -> .env.dev
-#   test           branche release/<version>               -> .env.test
-#   prod           branche main                            -> .env.prod
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm train
 #
 # Une clé absente ou vide prend la valeur par défaut indiquée après « :- ».
 
@@ -29,15 +23,13 @@ x-hardening: &hardening
 # Réglages communs aux services qui exécutent l'application.
 x-app: &app
   <<: *hardening
-  build:
-    context: .
-    target: ${APP_ENV:-dev}
-  image: livraison-express:${APP_ENV:-dev}
   # Même utilisateur que appuser, y compris avec l'image dev (qui n'en définit pas) :
   # sans capacités, root ne pourrait pas écrire dans le volume qui appartient à l'UID 1000.
+  image: ghcr.io/golem953/eligibilite-livraison-express:${IMAGE_TAG:?IMAGE_TAG manquant dans .env.prod (ex. 0.2.0)}
+  pull_policy: always
   user: "1000:1000"
   environment:
-    ENVIRONMENT: ${APP_ENV:-dev}
+    ENVIRONMENT: prod
     MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
     MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
     RANDOM_SEED: ${RANDOM_SEED:-42}
@@ -82,7 +74,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Lancé à la demande, puis s'arrête (ADR-0003) : docker compose run --rm train
+  # Lancé à la demande, puis s'arrête (ADR-0003) : docker compose -f docker-compose.prod.yml run --rm train
   train:
     <<: *app
     command: ["python", "-m", "app", "train"]

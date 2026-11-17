@@ -2,7 +2,8 @@
 #
 # Se lance quand une branche release/<version> ou hotfix/<version> est fusionnée
 # dans main (Git Flow). Elle ne déploie rien : elle construit l'image, la publie
-# sous ghcr.io/<propriétaire>/<dépôt>, puis pose le tag Git v<version>.
+# sous ghcr.io/<propriétaire>/<dépôt>, la vérifie avec docker-compose.prod.yml,
+# puis pose le tag Git v<version>.
 #
 # La version vient de pyproject.toml : elle doit être augmentée dans la branche
 # release/hotfix avant la fusion, sinon la CD s'arrête (le tag existerait déjà).
@@ -83,6 +84,28 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Le tag Git n'est posé que si l'image publiée démarre avec docker-compose.prod.yml,
+      # exactement comme en production.
+      - name: Vérifier l'image publiée avec docker-compose.prod.yml
+        env:
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+        run: |
+          docker compose -f docker-compose.prod.yml run --rm train
+          docker compose -f docker-compose.prod.yml up -d --wait api
+          curl -fsS http://127.0.0.1:8000/health/ready
+
+      - name: Logs en cas d'échec
+        if: failure()
+        env:
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+        run: docker compose -f docker-compose.prod.yml logs
+
+      - name: Arrêter l'environnement
+        if: always()
+        env:
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+        run: docker compose -f docker-compose.prod.yml down -v
 
       - name: Poser le tag Git v${{ steps.version.outputs.version }}
         run: |

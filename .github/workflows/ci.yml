@@ -64,20 +64,39 @@ jobs:
         run: pytest -v
 
   docker:
-    name: Build de l'image prod
+    name: Docker Compose (test)
     runs-on: ubuntu-24.04
     needs: [lint, test]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      # IMAGE_TAG factice : docker-compose.prod.yml l'exige, mais rien n'est téléchargé ici.
+      - name: Valider les fichiers Compose
+        env:
+          IMAGE_TAG: ci
+        run: |
+          for env in dev test prod; do
+            docker compose -f docker-compose.$env.yml config --quiet
+          done
 
-      # Vérifie seulement que l'image se construit : rien n'est publié ici.
-      - name: Construire l'image prod
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: prod
-          push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # L'image test est identique à prod : on la construit et on la fait tourner
+      # comme sur un environnement de validation. Les .env.* n'étant pas dans git,
+      # Compose prend les valeurs par défaut des fichiers.
+      - name: Construire l'image test
+        run: docker compose -f docker-compose.test.yml build api
+
+      - name: Entraîner le modèle
+        run: docker compose -f docker-compose.test.yml run --rm train
+
+      - name: Démarrer l'API et vérifier qu'elle sert le modèle
+        run: |
+          docker compose -f docker-compose.test.yml up -d --wait api
+          curl -fsS http://127.0.0.1:8000/health/ready
+
+      - name: Logs en cas d'échec
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs
+
+      - name: Arrêter l'environnement
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v

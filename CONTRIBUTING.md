@@ -89,8 +89,8 @@ Deux workflows GitHub Actions, dans `.github/workflows/` :
 
 | Workflow | Déclenchement | Étapes |
 |---|---|---|
-| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff, pytest, build de l'image `prod` (sans publication) |
-| `cd.yml` (CD) | push sur `main`, c'est-à-dire la fusion d'une `release/` ou d'un `hotfix/` | La CI complète, puis publication de l'image sur GitHub Container Registry et tag Git `v<version>` |
+| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff, pytest, validation des trois `docker-compose.*.yml`, puis image `test` construite, entraînée et démarrée avec `docker-compose.test.yml` (sans publication) |
+| `cd.yml` (CD) | push sur `main`, c'est-à-dire la fusion d'une `release/` ou d'un `hotfix/` | La CI complète, publication de l'image sur GitHub Container Registry, vérification de l'image publiée avec `docker-compose.prod.yml`, puis tag Git `v<version>` |
 
 La CD ne déploie rien : elle publie seulement l'image `ghcr.io/golem953/eligibilite-livraison-express`, avec quatre étiquettes :
 
@@ -111,40 +111,41 @@ Au premier envoi, le paquet est privé sur GitHub : pour le rendre public, *Pack
 
 Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flow a la sienne. Pour travailler et valider une release, les images se construisent avec Docker Compose ; l'image de production, elle, est publiée par la CD (voir « CI/CD »).
 
-Chaque environnement a son fichier de configuration `.env.<environnement>`, passé à Compose avec `--env-file`. La variable `APP_ENV` de ce fichier choisit l'étape du `Dockerfile` et le nom de l'image ; sans elle, c'est `dev`.
+Chaque environnement a son fichier `docker-compose.<environnement>.yml`, complet (services, volume, durcissement), qui ne diffère des autres que par l'image, et sa configuration `.env.<environnement>`, passée avec `--env-file`.
 
-| Moment | Branche | Fichier | `APP_ENV` | Image | Contenu |
-|---|---|---|---|---|---|
-| Développement sur son poste | `feat/*`, `dev` | `.env.dev` | `dev` | `livraison-express:dev` | Tout le dépôt, avec pytest et ruff |
-| Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `.env.test` | `test` | `livraison-express:test` | Identique à la prod : sert à valider la release |
-| Fusion dans `main` | `main` | `.env.prod` | `prod` | `livraison-express:prod` | Dépendances d'exécution et code uniquement |
+| Moment | Branche | Fichiers | Image | Contenu |
+|---|---|---|---|---|
+| Développement sur son poste | `feat/*`, `dev` | `docker-compose.dev.yml`, `.env.dev` | `livraison-express:dev`, construite | Tout le dépôt, avec pytest et ruff |
+| Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `docker-compose.test.yml`, `.env.test` | `livraison-express:test`, construite | Identique à la prod : sert à valider la release |
+| Fusion dans `main` | `main` | `docker-compose.prod.yml`, `.env.prod` | `ghcr.io/golem953/eligibilite-livraison-express:<IMAGE_TAG>`, publiée par la CD | Dépendances d'exécution et code uniquement |
 
 ### En développement
 
 ```powershell
-docker compose --env-file .env.dev up -d --build
-docker compose --env-file .env.dev run --rm train
-docker compose --env-file .env.dev restart api
+docker compose -f docker-compose.dev.yml --env-file .env.dev up -d --build
+docker compose -f docker-compose.dev.yml --env-file .env.dev run --rm train
+docker compose -f docker-compose.dev.yml --env-file .env.dev restart api
 ```
 
 ### Pour valider une release
 
-Sur la branche `release/<version>` (ou `hotfix/<version>`), avec un fichier `.env.test` qui contient `APP_ENV=test` :
+Sur la branche `release/<version>` (ou `hotfix/<version>`), avec un fichier `.env.test` :
 
 ```powershell
-docker compose --env-file .env.test up -d --build
-docker compose --env-file .env.test run --rm train
-docker compose --env-file .env.test restart api
+docker compose -f docker-compose.test.yml --env-file .env.test up -d --build
+docker compose -f docker-compose.test.yml --env-file .env.test run --rm train
+docker compose -f docker-compose.test.yml --env-file .env.test restart api
 ```
 
 La release n'est fusionnée dans `main` que si l'application fonctionne avec cette image.
 
 ### Pour la production
 
-Sur `main`, après la fusion et le tag, avec un fichier `.env.prod` qui contient `APP_ENV=prod` :
+Après la fusion dans `main` et la publication par la CD, avec un fichier `.env.prod` qui contient en plus `IMAGE_TAG=<version>` (ex. `0.2.0`). Rien n'est construit : l'image est téléchargée depuis ghcr.io.
 
 ```powershell
-docker compose --env-file .env.prod up -d --build
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm train
 ```
 
 Les étapes `test` et `prod` étant identiques, l'image validée en release est exactement celle qui part en production.
@@ -153,7 +154,7 @@ Les étapes `test` et `prod` étant identiques, l'image validée en release est 
 
 - Créez `.env.test` et `.env.prod` sur le modèle de `.env.dev`, sur la machine qui en a besoin.
 - Ne laissez aucune clé vide : l'application refuse une valeur vide pour un nombre.
-- Ces fichiers sont lus par Compose, pas par l'application. Ne mettez pas `APP_ENV` dans le fichier `.env` lu par l'application : elle refuse les clés qu'elle ne connaît pas.
+- Ces fichiers sont lus par Compose, pas par l'application. Ne mettez pas `IMAGE_TAG`, `API_PORT` ni `MLFLOW_PORT` dans le fichier `.env` lu par l'application : elle refuse les clés qu'elle ne connaît pas.
 - Les fichiers `.env.*` sont exclus de git (sauf `.env.example`), car ceux de test et de prod contiendront des secrets.
 
 ## Commits
