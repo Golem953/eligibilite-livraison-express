@@ -1,0 +1,44 @@
+# Contrôle « Origine de la PR vers main » : main n'accepte que release/x.y.z et hotfix/x.y.z.
+#
+# GitHub ne sait pas filtrer nativement la branche source d'une PR : ce contrôle
+# signale en rouge toute autre branche, une branche de fork du même nom et une
+# version déjà taguée. Sans ruleset, il ne bloque pas le bouton Merge : c'est la CD
+# qui refuse ensuite de publier. Le format est exact, car la CD lit la version dans
+# le nom de la branche.
+name: Origine
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  origine:
+    name: Origine de la PR vers main
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Vérifier la branche source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REPO" != "$GH_REPO" ]; then
+            echo "::error::La PR vient d'un fork ($HEAD_REPO) : main n'accepte que les branches de ce dépôt."
+            exit 1
+          fi
+          if ! [[ "$HEAD_REF" =~ ^(release|hotfix)/[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Branche « $HEAD_REF » refusée : main n'accepte que release/x.y.z et hotfix/x.y.z."
+            exit 1
+          fi
+          version=${HEAD_REF#*/}
+          if gh api "repos/$GH_REPO/git/ref/tags/v$version" > /dev/null 2>&1; then
+            echo "::error::La version $version est déjà publiée (tag v$version) : elle ne se republie jamais."
+            exit 1
+          fi
+          echo "Origine valide : $HEAD_REF (version $version)."

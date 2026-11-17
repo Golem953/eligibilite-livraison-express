@@ -1,4 +1,4 @@
-// Comptes MongoDB de l'environnement de test, un par usage (ADR-0008, ADR-0009).
+// Comptes MongoDB de l'environnement de test, un par usage (ADR-0009, ADR-0010).
 // Exécuté une seule fois, à la création du volume, par l'image officielle mongo.
 //
 //   training_reader : lecture seule, utilisé par l'entraînement ;

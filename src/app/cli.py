@@ -108,7 +108,7 @@ def _train(settings: Settings) -> int:
     result = build_training_service(settings).run()
     logger.info("Entraînement terminé avec succès en %.2f s", time.perf_counter() - started_at)
     # Dernière ligne de la sortie, en JSON : l'orchestrateur la lit pour savoir si le
-    # modèle a changé et s'il faut redémarrer l'API (ADR-0010).
+    # modèle a changé et s'il faut redémarrer l'API (ADR-0011).
     print(json.dumps(asdict(result)), flush=True)
     return 0
 

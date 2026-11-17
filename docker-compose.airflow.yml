@@ -1,4 +1,4 @@
-# Orchestrateur de réentraînement : Airflow (ADR-0010).
+# Orchestrateur de réentraînement : Airflow (ADR-0011).
 #
 #   docker compose -f docker-compose.airflow.yml --env-file .env.airflow up -d --build
 #   Interface : http://127.0.0.1:8080 (compte admin, mot de passe AIRFLOW_ADMIN_PASSWORD)
@@ -96,7 +96,7 @@ services:
     <<: *airflow
     command: ["api-server"]
     ports:
-      # Réservé à l'équipe, par tunnel SSH (ADR-0008).
+      # Réservé à l'équipe, par tunnel SSH (ADR-0009).
       - "127.0.0.1:${AIRFLOW_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]

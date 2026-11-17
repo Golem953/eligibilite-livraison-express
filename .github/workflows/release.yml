@@ -1,0 +1,87 @@
+# Bouton « Release » : Actions → Release → Run workflow (laisser « Use workflow from » sur main).
+#
+# Calcule la version suivante à partir du dernier tag vX.Y.Z, crée release/x.y.z
+# pile sur la tête de dev (aucun commit) et ouvre la pull request vers main avec la
+# liste des PR apportées. main ne bouge pas : la mise en production se fait en
+# mergeant cette PR (« Create a merge commit »), puis cd.yml prend le relais.
+#
+# Une branche ou une PR créée avec le GITHUB_TOKEN ne déclenche aucun workflow : le
+# bouton lance donc lui-même la CI sur release/x.y.z (workflow_dispatch, autorisé).
+# Prérequis : Settings → Actions → General → « Allow GitHub Actions to create and
+# approve pull requests » coché.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      niveau:
+        description: "patch : correctifs · minor : nouveautés compatibles · major : rupture"
+        type: choice
+        options: [patch, minor, major]
+        default: minor
+        required: true
+
+permissions:
+  contents: write       # créer la branche release/x.y.z
+  pull-requests: write  # ouvrir la PR vers main
+  actions: write        # lancer la CI sur la branche
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Créer la release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Créer release/x.y.z et la PR vers main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NIVEAU: ${{ inputs.niveau }}
+        run: |
+          set -euo pipefail
+
+          # Une seule release à la fois, et jamais pendant un hotfix ou son report dans dev.
+          en_cours=$(gh pr list --state open --limit 100 --json headRefName,baseRefName --jq '
+            .[] | select(
+              (.baseRefName == "main" and (.headRefName | test("^(release|hotfix)/")))
+              or (.baseRefName == "dev" and (.headRefName | startswith("fix/report-hotfix-")))
+            ) | .headRefName')
+          if [ -n "$en_cours" ]; then
+            echo "::error::PR déjà ouverte : $en_cours. Mergez-la ou fermez-la avant de lancer une release."
+            exit 1
+          fi
+
+          # La version vient des tags, jamais d'un fichier.
+          dernier=$(gh api "repos/$GH_REPO/git/matching-refs/tags/v" --jq '.[].ref | sub("refs/tags/"; "")' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          IFS=. read -r majeur mineur correctif <<< "${dernier:-v0.0.0}"
+          majeur=${majeur#v}
+          case "$NIVEAU" in
+            major) version="$((majeur + 1)).0.0" ;;
+            minor) version="$majeur.$((mineur + 1)).0" ;;
+            patch) version="$majeur.$mineur.$((correctif + 1))" ;;
+          esac
+          branche="release/$version"
+
+          sha=$(gh api "repos/$GH_REPO/git/ref/heads/dev" --jq .object.sha)
+          if [ "$(gh api "repos/$GH_REPO/compare/main...$sha" --jq .ahead_by)" = "0" ]; then
+            echo "::error::dev n'apporte rien de nouveau par rapport à main : rien à publier."
+            exit 1
+          fi
+
+          gh api "repos/$GH_REPO/git/refs" -f ref="refs/heads/$branche" -f sha="$sha" > /dev/null
+
+          # Liste des PR mergées dans dev depuis la dernière version.
+          notes=(-f tag_name="v$version" -f target_commitish="$sha")
+          [ -n "$dernier" ] && notes+=(-f previous_tag_name="$dernier")
+          corps=$(gh api "repos/$GH_REPO/releases/generate-notes" "${notes[@]}" --jq .body)
+
+          url=$(gh pr create --base main --head "$branche" --title "Release $version" --body "$(printf '%s\n\n%s\n\n%s' \
+            "Release \`$version\` (${dernier:-aucune version précédente} → v$version, niveau \`$NIVEAU\`), créée sur la tête de dev ($sha)." \
+            "À merger avec **Create a merge commit**. Ne rien committer sur cette branche." \
+            "$corps")")
+          gh workflow run ci.yml --ref "$branche"
+          echo "Release $version : $url (CI lancée sur $branche)" >> "$GITHUB_STEP_SUMMARY"

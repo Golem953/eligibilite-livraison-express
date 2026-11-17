@@ -21,23 +21,33 @@ Suivez la section « Installation » du [README](README.md) : `requirements-dev.
 
 ## Branches (Git Flow)
 
-Le projet suit le modèle [Git Flow](https://nvie.com/posts/a-successful-git-branching-model/). Deux branches sont permanentes, les autres sont créées pour un besoin précis puis supprimées une fois fusionnées.
+Le projet suit un modèle dérivé de [Git Flow](https://nvie.com/posts/a-successful-git-branching-model/). La CI/CD ne déploie sur aucun serveur : elle publie seulement l'image sur GitHub Container Registry.
 
-| Branche | Durée de vie | Rôle | Créée depuis | Fusionnée dans |
-|---|---|---|---|---|
-| `main` | permanente | Code en production. Chaque commit de `main` est une version publiée, marquée par un tag | — | — |
-| `dev` | permanente | Intégration : contient les fonctionnalités terminées de la prochaine version | `main` | — |
-| `feat/<sujet>` | temporaire | Une fonctionnalité ou un chantier | `dev` | `dev` |
-| `release/<version>` | temporaire | Préparation d'une version : numéro de version, documentation, derniers correctifs. Aucune nouvelle fonctionnalité | `dev` | `main` **et** `dev` |
-| `hotfix/<version>` | temporaire | Correctif urgent sur la production | `main` | `main` **et** `dev` |
+| Branche | Rôle | Publie |
+|---|---|---|
+| `feat/…`, `fix/…`, `chore/…` | travail | — |
+| `dev` | intégration | — |
+| `release/x.y.z` | `dev` figé à l'instant du bouton, supprimée après la publication | — |
+| `hotfix/x.y.z` | correctif urgent, parti de `main`, supprimée après la publication | — |
+| `main` | production | image `x.y.z` sur ghcr.io, tag `vx.y.z` et release GitHub, à chaque merge |
 
-Règles :
+Un seul sens : `dev` → `release/x.y.z` → `main`. Jamais `main` → `dev`, sauf le report d'un hotfix.
 
-- **On ne pousse jamais directement sur `main` ni sur `dev`** : tout passe par une pull request.
-- **Les branches temporaires se nomment toujours avec un préfixe et un `/`** : `feat/repository-postgresql`, `release/0.2.0`, `hotfix/0.1.1`. Ne créez jamais de branche nommée `feat`, `release` ou `hotfix` tout court : Git refuserait ensuite toute branche `hotfix/…`.
-- **Les noms sont en minuscules**, avec des tirets ou des underscores.
+```text
+feat/xxx ──PR──▶ dev
+                  │  ▲
+                  │  └── PR fix/report-hotfix-x.y.z (ouverte toute seule après la publication)
+      bouton « Release » (patch / minor / major)
+                  ▼
+           release/x.y.z ──PR──▶ main ──▶ image x.y.z sur ghcr.io
+           (= dev, aucun commit)  ▲       puis tag vx.y.z + release GitHub
+                                  │
+           hotfix/x.y.z ───PR─────┘  (correctif urgent, parti de main)
+```
 
-### Développer une fonctionnalité
+### Le cycle
+
+**Travail.** Une branche depuis `dev`, une PR vers `dev`, merge.
 
 ```powershell
 git switch dev
@@ -47,50 +57,76 @@ git switch -c feat/mon-sujet
 git push -u origin feat/mon-sujet     # puis pull request vers dev
 ```
 
-### Publier une version
+**Release.** Onglet *Actions* → *Release* → *Run workflow*. Laissez *Use workflow from* sur `main` : ce menu dit seulement où GitHub lit le workflow. Choisissez le niveau :
 
-```powershell
-git switch dev
-git pull
-git switch -c release/0.2.0
-# version = "0.2.0" dans pyproject.toml, documentation, derniers correctifs
-git push -u origin release/0.2.0      # puis pull request vers main
-```
+- `patch` : correctifs ;
+- `minor` : nouveautés compatibles ;
+- `major` : rupture (contrat de l'API, variables du modèle…).
 
-Une fois la pull request fusionnée dans `main`, la CD (voir « CI/CD » ci-dessous) publie l'image `0.2.0` et pose le tag Git `v0.2.0`. Il n'y a rien à faire à la main.
+Le workflow (`release.yml`) calcule la version à partir du dernier tag `vx.y.z`, crée `release/x.y.z` pile sur la tête de `dev`, sans aucun commit, et ouvre la PR vers `main` avec la liste des PR apportées, puis lance la CI sur la branche. `main` ne bouge pas.
 
-Fusionnez ensuite `release/0.2.0` dans `dev` (pull request), pour que les derniers correctifs y soient aussi, puis supprimez la branche.
+**Publication.** Mergez la PR `release/x.y.z` → `main` avec **Create a merge commit**. La CD publie l'image `x.y.z` sur ghcr.io, crée le tag `vx.y.z` et la release GitHub, puis supprime la branche de release. C'est fini : rien ne revient dans `dev`, car la release n'y a rien ajouté.
 
-### Corriger la production en urgence
+### Hotfix (correctif urgent)
 
-```powershell
-git switch main
-git pull
-git switch -c hotfix/0.1.1
-# correctif + version dans pyproject.toml
-git push -u origin hotfix/0.1.1       # puis pull request vers main
-```
+Pour corriger la production sans embarquer ce qui attend dans `dev`.
 
-Après la fusion dans `main`, la CD publie l'image et pose le tag `v0.1.1`, comme pour une version. Fusionnez ensuite `hotfix/0.1.1` dans `dev`, puis supprimez la branche.
+1. **Version** : le dernier tag `vX.Y.Z`, correctif + 1.
 
-### Numéros de version
+   ```bash
+   git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' | sort -V | tail -1
+   ```
 
-Les versions suivent le [versionnage sémantique](https://semver.org/lang/fr/) `MAJEUR.MINEUR.CORRECTIF` :
+2. **Branche depuis `main`** (l'état de la production), au format exact `hotfix/x.y.z`. Un nom libre (`hotfix/correctif`) est refusé par le contrôle d'origine, car la CD ne saurait pas en lire la version.
 
-- **correctif** (`0.1.0` → `0.1.1`) : correction sans changement de comportement attendu, typiquement un hotfix ;
-- **mineur** (`0.1.1` → `0.2.0`) : nouvelle fonctionnalité compatible avec l'existant ;
-- **majeur** (`0.2.0` → `1.0.0`) : changement incompatible, par exemple une modification du contrat de l'API ou des variables du modèle.
+   ```powershell
+   git fetch origin
+   git switch -c hotfix/0.2.1 origin/main
+   ```
 
-La version est dans `pyproject.toml` (`version`), et le tag Git correspondant est `v<version>`. Elle doit être augmentée dans la branche `release/` ou `hotfix/` : si le tag existe déjà, la CD refuse de publier.
+3. **Correctif, commit, push**, puis PR `hotfix/x.y.z` → `main` : mêmes contrôles qu'une release, merge en **Create a merge commit**. Image `x.y.z`, tag `vx.y.z`, release GitHub, branche supprimée : comme une release.
+
+4. **Report dans `dev` : automatique.** Après la publication, la CD crée `fix/report-hotfix-x.y.z` sur le commit publié (= tag `vx.y.z`) ouvre la PR vers `dev` et y lance la CI. Il reste à la merger en **Create a merge commit**. En cas de conflit :
+
+   ```powershell
+   git fetch origin
+   git switch fix/report-hotfix-0.2.1
+   git merge origin/dev
+   # résoudre, puis :
+   git commit
+   git push
+   ```
+
+   C'est la seule entrée de `main` dans `dev`, et elle passe par une PR. Pas de cherry-pick, ni de squash de cette PR : `dev` aurait la même modification sans l'historique du hotfix, et la release suivante entrerait en conflit sans endroit autorisé pour le résoudre (aucun commit sur `release/*`).
+
+**Ordre imposé : hotfix → report → release.** Le bouton *Release* refuse de partir tant qu'une PR de hotfix vers `main` ou une PR de report vers `dev` est ouverte.
+
+### Règles
+
+- **Aucun push direct sur `dev` ou `main`** : tout passe par une PR. Aucun ruleset ne l'impose : c'est une règle d'équipe.
+- **Aucun fichier de version.** La version vient des tags : le bouton prend le dernier `vx.y.z` et calcule la suivante. Sur `main`, la CD lit la version dans le nom de la branche de la PR mergée (`release/x.y.z` ou `hotfix/x.y.z`). Le champ `version` de `pyproject.toml` n'est pas utilisé pour les releases.
+- **Toute publication passe par une release ou un hotfix.** Un commit de `main` qui ne vient ni d'une PR `release/x.y.z` ni d'une PR `hotfix/x.y.z` est refusé par la CD, et une version déjà taguée ne se republie jamais.
+- **`main` n'accepte que les PR depuis `release/x.y.z` et `hotfix/x.y.z`.** Le contrôle « Origine de la PR vers main » (`origine.yml`) échoue pour toute autre branche source, pour une branche de fork du même nom et pour une version déjà taguée. Le format est exact : `release/1.2` ou `hotfix/correctif` sont refusés dès la PR. Sans ruleset, ce contrôle ne bloque pas le bouton *Merge* : **ne mergez jamais une PR vers `main` dont il est rouge**. Si cela arrive quand même, la CD refuse de publier.
+- **Ne jamais committer sur une branche `release/*`.** Elle doit rester égale à `dev`. Un correctif se fait dans `dev` (PR), puis par une nouvelle release. Pour remplacer une release pas encore mergée : fermez sa PR, supprimez la branche et relancez le bouton.
+- **Merger les PR de release, de hotfix et de report en « Create a merge commit »**, jamais en squash ni en rebase : ces deux modes réécrivent les commits, `main` contiendrait des commits que `dev` n'a pas, et les releases suivantes finiraient en conflit.
+- **Une seule release à la fois** : le bouton refuse s'il y a déjà une PR de release ou de hotfix ouverte.
+- **Noms de branches** en minuscules, toujours avec un préfixe et un `/` (`feat/repository-postgresql`). Ne créez jamais de branche nommée `feat`, `release` ou `hotfix` tout court : Git refuserait ensuite toute branche `hotfix/…`.
+
+### Mise en place (une seule fois, par un administrateur du dépôt)
+
+- **Autoriser le bouton à ouvrir des PR** : *Settings → Actions → General → Workflow permissions*, cochez **Allow GitHub Actions to create and approve pull requests**. Le bouton et la CD utilisent le `GITHUB_TOKEN` ; une branche ou une PR créée avec ce jeton ne déclenche aucun workflow, c'est pourquoi ils lancent eux-mêmes la CI sur la branche créée (elle apparaît dans les contrôles de la PR). Le contrôle d'origine, lui, ne tourne pas sur ces PR : leur nom de branche est garanti par le bouton.
+- **Première release** : GitHub n'affiche le bouton qu'une fois `release.yml` présent sur `main`. La première se fait donc à la main : `release/x.y.z` créée sur la tête de `dev`, PR vers `main`, merge. Elle porte une version strictement supérieure au dernier tag (ici `v0.2.0`, donc `release/0.3.0`).
 
 ## CI/CD
 
-Deux workflows GitHub Actions, dans `.github/workflows/` :
+Quatre workflows GitHub Actions, dans `.github/workflows/` :
 
 | Workflow | Déclenchement | Étapes |
 |---|---|---|
-| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff, pytest, build de l'image `prod` (sans publication) |
-| `cd.yml` (CD) | push sur `main`, c'est-à-dire la fusion d'une `release/` ou d'un `hotfix/` | La CI complète, puis publication de l'image sur GitHub Container Registry et tag Git `v<version>` |
+| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff, pytest. Build de l'image `prod` (sans publication) **uniquement sur `release/*` et `hotfix/*`** : aucune image n'est construite avant la release |
+| `origine.yml` | pull request vers `main` | Refuse toute branche source autre que `release/x.y.z` ou `hotfix/x.y.z`, ou une version déjà taguée |
+| `release.yml` (bouton) | *Actions → Release → Run workflow* | Calcule la version depuis le dernier tag, crée `release/x.y.z` sur `dev` et ouvre la PR vers `main` |
+| `cd.yml` (CD) | push sur `main`, c'est-à-dire le merge d'une `release/` ou d'un `hotfix/` | Version lue dans le nom de la branche, CI complète, publication de l'image sur ghcr.io, tag `vx.y.z`, release GitHub, suppression de la branche ; après un hotfix, PR de report vers `dev` |
 
 La CD ne déploie rien : elle publie seulement l'image `ghcr.io/golem953/eligibilite-livraison-express`, avec quatre étiquettes :
 
@@ -113,7 +149,7 @@ Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flo
 
 Chaque environnement a son fichier Compose et son fichier de variables `.env.<environnement>`, passé à Compose avec `--env-file`.
 
-| Moment | Branche | Compose | Variables | Image | Base MongoDB (ADR-0009) |
+| Moment | Branche | Compose | Variables | Image | Base MongoDB (ADR-0010) |
 |---|---|---|---|---|---|
 | Développement sur son poste | `feat/*`, `dev` | `docker-compose.yml` | `.env.dev` | `livraison-express:dev`, construite : tout le dépôt, avec pytest et ruff | Aucune par défaut (`memory://`) ; MongoDB et ETL simulés avec le profil `etl` |
 | Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `docker-compose.test.yml` | `.env.test` | `livraison-express:test`, construite : identique à la prod | MongoDB de test, avec authentification, alimenté par l'ETL simulé |
@@ -170,7 +206,7 @@ Sur la machine de prod, à côté de `docker-compose.prod.yml`, avec un fichier 
 docker compose -f docker-compose.airflow.yml --env-file .env.airflow up -d --build
 ```
 
-Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0010).
+Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0011).
 
 - Interface : <http://127.0.0.1:8080>, compte `admin` et mot de passe `AIRFLOW_ADMIN_PASSWORD`. Depuis un poste, par tunnel SSH.
 - Lancer un entraînement sans attendre la nuit : bouton *Trigger* du DAG, ou `docker compose -f docker-compose.airflow.yml --env-file .env.airflow exec airflow-scheduler airflow dags trigger retrain_express_model`.
@@ -238,7 +274,7 @@ pytest
 
 ## Pull requests
 
-1. Partez d'une branche à jour, selon le type de travail (voir « Branches » ci-dessus) : `dev` pour une fonctionnalité ou une version, `main` pour un correctif urgent.
+1. Partez d'une branche à jour, selon le type de travail (voir « Branches » ci-dessus) : `dev` pour une fonctionnalité, `main` pour un hotfix. Les releases ne se créent pas à la main : elles passent par le bouton *Release*.
 2. Gardez la pull request petite et centrée sur un seul sujet.
 3. Décrivez **ce qui change**, **pourquoi**, et **comment le vérifier**. Liez l'issue ou l'ADR concerné.
 4. Mettez à jour la documentation touchée : README, `.env.example`, ADR.

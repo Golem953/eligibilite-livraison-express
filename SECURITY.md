@@ -36,10 +36,10 @@ Le correctif est développé sur une branche `hotfix/<version>` créée depuis `
 
 Le projet est une version pédagogique, pas encore prévue pour être exposée sur Internet. Les points suivants sont connus et suivis dans [ADR.md](ADR.md). Inutile de les signaler :
 
-- **L'API n'a pas d'authentification** (ADR-0007). Elle écoute uniquement sur `127.0.0.1` par défaut : ne la lancez pas avec `--host 0.0.0.0` sur un réseau partagé.
-- **La validation des commandes est partielle** : les types sont vérifiés, mais pas les bornes ni les valeurs des catégories (ADR-0007).
-- **Le modèle est chargé avec `joblib`**, qui repose sur pickle : charger un fichier `.joblib` exécute le code qu'il contient. Ne chargez jamais un modèle d'origine inconnue, et protégez en écriture le dossier de `MODEL_PATH` (ADR-0008).
-- **MLflow tourne en local, sans authentification** (ADR-0008).
+- **L'API n'a pas d'authentification** (ADR-0008). Elle écoute uniquement sur `127.0.0.1` par défaut : ne la lancez pas avec `--host 0.0.0.0` sur un réseau partagé.
+- **La validation des commandes est partielle** : les types sont vérifiés, mais pas les bornes ni les valeurs des catégories (ADR-0008).
+- **Le modèle est chargé avec `joblib`**, qui repose sur pickle : charger un fichier `.joblib` exécute le code qu'il contient. Ne chargez jamais un modèle d'origine inconnue, et protégez en écriture le dossier de `MODEL_PATH` (ADR-0009).
+- **MLflow tourne en local, sans authentification** (ADR-0009).
 
 Un signalement qui montre qu'une de ces limites a un impact plus grave que prévu reste le bienvenu.
 

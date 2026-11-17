@@ -1,11 +1,13 @@
 # Livraison continue : publie l'image de production sur GitHub Container Registry.
 #
-# Se lance quand une branche release/<version> ou hotfix/<version> est fusionnée
-# dans main (Git Flow). Elle ne déploie rien : elle construit l'image, la publie
-# sous ghcr.io/<propriétaire>/<dépôt>, puis pose le tag Git v<version>.
+# Se lance au merge d'une PR release/x.y.z ou hotfix/x.y.z dans main. Elle ne
+# déploie rien : elle construit l'image, la publie sous ghcr.io/<propriétaire>/<dépôt>,
+# pose le tag Git vx.y.z, crée la release GitHub et supprime la branche mergée.
+# Après un hotfix, elle ouvre en plus la PR de report fix/report-hotfix-x.y.z vers dev.
 #
-# La version vient de pyproject.toml : elle doit être augmentée dans la branche
-# release/hotfix avant la fusion, sinon la CD s'arrête (le tag existerait déjà).
+# La version vient du nom de la branche de la PR mergée, jamais d'un fichier.
+# Un commit de main qui ne vient pas d'une PR release/ ou hotfix/ est refusé, et une
+# version déjà taguée ne se republie jamais.
 name: CD
 
 on:
@@ -18,6 +20,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  version:
+    name: Lire la version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      branche: ${{ steps.version.outputs.branche }}
+    steps:
+      - name: Version depuis la branche de la PR mergée
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branche=$(gh api "repos/$GH_REPO/commits/$GITHUB_SHA/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0].head.ref // ""')
+          if ! [[ "$branche" =~ ^(release|hotfix)/([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Ce commit de main ne vient pas d'une PR release/x.y.z ou hotfix/x.y.z (branche : « $branche ») : rien n'est publié."
+            exit 1
+          fi
+          version=${BASH_REMATCH[2]}
+          if gh api "repos/$GH_REPO/git/ref/tags/v$version" > /dev/null 2>&1; then
+            echo "::error::Le tag v$version existe déjà : une version publiée ne se republie jamais."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "branche=$branche" >> "$GITHUB_OUTPUT"
+
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
@@ -27,40 +60,29 @@ jobs:
   publish:
     name: Publier l'image
     runs-on: ubuntu-24.04
-    needs: ci
+    needs: [version, ci]
     permissions:
-      contents: write   # poser le tag Git
+      contents: write   # tag Git, release GitHub, suppression de la branche
       packages: write   # publier sur ghcr.io
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      BRANCHE: ${{ needs.version.outputs.branche }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Lire la version
-        id: version
-        run: |
-          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Version '$version' invalide dans pyproject.toml (attendu : MAJEUR.MINEUR.CORRECTIF)."
-            exit 1
-          fi
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
-            echo "::error::Le tag v$version existe déjà : augmentez la version dans pyproject.toml (branche release ou hotfix)."
-            exit 1
-          fi
-          {
-            echo "version=$version"
-            echo "minor=${version%.*}"
-            # ghcr.io impose un nom d'image en minuscules.
-            echo "image=ghcr.io/${GITHUB_REPOSITORY,,}"
-          } >> "$GITHUB_OUTPUT"
+      - name: Nom de l'image
+        id: image
+        # ghcr.io impose un nom d'image en minuscules.
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Étiquettes de l'image
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.version.outputs.image }}
+          images: ${{ steps.image.outputs.image }}
           tags: |
-            type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=${{ steps.version.outputs.minor }}
+            type=raw,value=${{ env.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }}
             type=raw,value=latest
             type=sha,prefix=sha-
 
@@ -84,9 +106,42 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Poser le tag Git v${{ steps.version.outputs.version }}
+      - name: Tag v${{ env.VERSION }} et release GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ steps.version.outputs.version }}" -m "Version ${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          git tag -a "v$VERSION" -m "Version $VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" --verify-tag --title "v$VERSION" --generate-notes
+
+      - name: Supprimer ${{ env.BRANCHE }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCHE" || echo "Branche déjà supprimée."
+
+  report-hotfix:
+    name: Report du hotfix dans dev
+    runs-on: ubuntu-24.04
+    needs: [version, publish]
+    if: startsWith(needs.version.outputs.branche, 'hotfix/')
+    permissions:
+      contents: write       # créer la branche de report
+      pull-requests: write  # ouvrir la PR vers dev
+      actions: write        # lancer la CI sur la branche
+    steps:
+      - name: Ouvrir la PR fix/report-hotfix-x.y.z vers dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          branche="fix/report-hotfix-$VERSION"
+          gh api "repos/$GH_REPO/git/refs" -f ref="refs/heads/$branche" -f sha="$GITHUB_SHA" > /dev/null
+          gh pr create --base dev --head "$branche" --title "Report du hotfix $VERSION dans dev" --body "$(printf '%s\n\n%s' \
+            "Report du hotfix \`$VERSION\` (tag \`v$VERSION\`), seule entrée de main dans dev." \
+            "À merger avec **Create a merge commit**, jamais en squash ni en rebase. En cas de conflit : \`git switch $branche\`, \`git merge origin/dev\`, résoudre, commit, push.")"
+          # Créée avec le GITHUB_TOKEN, la branche ne déclenche pas la CI : on la lance.
+          gh workflow run ci.yml --ref "$branche"
