@@ -1,6 +1,6 @@
 """`OrderRepositoryInterface` des commandes de l'ERP : la collection `orders` de MongoDB.
 
-L'entraînement lit les commandes que l'ETL de l'ERP écrit dans MongoDB (ADR-0009).
+L'entraînement lit les commandes que l'ETL de l'ERP écrit dans MongoDB (ADR-0010).
 Chaque document contient les variables de `OrderEntity` et le label `express_eligible`.
 
 MongoDB n'impose aucun schéma : chaque document est contrôlé à la lecture. Pour
@@ -8,7 +8,7 @@ l'entraînement, un document sans label est ignoré, et un document invalide (ch
 absent, `null` ou de mauvais type) est écarté et compté dans les logs.
 
 `save` remplace la commande de même `order_id`. Il sert à alimenter une base de dev
-ou de CI : en prod, le compte de l'entraînement est en lecture seule (ADR-0009) et
+ou de CI : en prod, le compte de l'entraînement est en lecture seule (ADR-0010) et
 MongoDB refuse l'écriture.
 """
 

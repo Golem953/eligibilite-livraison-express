@@ -317,7 +317,7 @@ Les interfaces de `domain/interface/` décrivent seulement les opérations dont 
 
 | Interface | Méthodes | Implémentation lite | Limite |
 |---|---|---|---|
-| `OrderRepositoryInterface` | `save()`, `get()`, `get_training_data()` | dictionnaire en mémoire ; collection MongoDB de l'ERP (ADR-0009) | en mémoire : données perdues au redémarrage et non partagées |
+| `OrderRepositoryInterface` | `save()`, `get()`, `get_training_data()` | dictionnaire en mémoire ; collection MongoDB de l'ERP (ADR-0010) | en mémoire : données perdues au redémarrage et non partagées |
 | `ModelRepositoryInterface` | `save()`, `load()` | fichier local via Joblib | pas de registre complet ni de rollback |
 | `ExperimentTrackerInterface` | `log_run()` | MLflow | — |
 
@@ -362,7 +362,7 @@ build_training_service(settings)          commande train
   └─ TrainingService
 ```
 
-Le chargement au démarrage évite de relire le fichier à chaque requête. Il n'y a ni singleton ni état global : chaque point d'entrée crée sa configuration et ses objets, et les tests construisent les leurs. L'assemblage de l'entraînement importe MLflow à l'intérieur de la fonction : l'API ne le charge jamais (ADR-0003).
+Le chargement au démarrage évite de relire le fichier à chaque requête. Il n'y a ni singleton ni état global : chaque point d'entrée crée sa configuration et ses objets, et les tests construisent les leurs. L'assemblage de l'entraînement importe MLflow à l'intérieur de la fonction : l'API ne le charge jamais (ADR-0007).
 
 ---
 

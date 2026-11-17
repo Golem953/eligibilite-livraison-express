@@ -1,4 +1,4 @@
-# ETL simulé, pour le développement uniquement (ADR-0009). En prod, c'est l'ETL de
+# ETL simulé, pour le développement uniquement (ADR-0010). En prod, c'est l'ETL de
 # l'ERP qui alimente MongoDB : cette image n'y est jamais déployée.
 FROM python:3.13.18-slim@sha256:76baad6037690d6e8c4397fbcaef17bca6f19eecef822b708fe8fa3417d30bb5
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 class PromotionPolicy:
     """Promeut le nouveau modèle s'il bat le modèle en service d'au moins `min_gain`.
 
-    Les deux jeux de métriques sont mesurés sur le même jeu de test (ADR-0009). Sans
+    Les deux jeux de métriques sont mesurés sur le même jeu de test (ADR-0010). Sans
     modèle en service, le nouveau modèle est toujours promu.
     """
 

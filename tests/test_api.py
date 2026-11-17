@@ -27,7 +27,7 @@ def client_with_model(fake_model):
 
 
 def test_api_does_not_import_training_code():
-    """ADR-0003 : l'API n'importe ni MLflow ni le code d'entraînement.
+    """ADR-0007 : l'API n'importe ni MLflow ni le code d'entraînement.
 
     Lancé dans un processus séparé, car d'autres tests ont déjà importé MLflow.
     """

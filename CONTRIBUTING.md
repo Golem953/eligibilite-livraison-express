@@ -113,7 +113,7 @@ Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flo
 
 Chaque environnement a son fichier Compose et son fichier de variables `.env.<environnement>`, passé à Compose avec `--env-file`.
 
-| Moment | Branche | Compose | Variables | Image | Base MongoDB (ADR-0009) |
+| Moment | Branche | Compose | Variables | Image | Base MongoDB (ADR-0010) |
 |---|---|---|---|---|---|
 | Développement sur son poste | `feat/*`, `dev` | `docker-compose.yml` | `.env.dev` | `livraison-express:dev`, construite : tout le dépôt, avec pytest et ruff | Aucune par défaut (`memory://`) ; MongoDB et ETL simulés avec le profil `etl` |
 | Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `docker-compose.test.yml` | `.env.test` | `livraison-express:test`, construite : identique à la prod | MongoDB de test, avec authentification, alimenté par l'ETL simulé |
@@ -170,7 +170,7 @@ Sur la machine de prod, à côté de `docker-compose.prod.yml`, avec un fichier 
 docker compose -f docker-compose.airflow.yml --env-file .env.airflow up -d --build
 ```
 
-Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0010).
+Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0011).
 
 - Interface : <http://127.0.0.1:8080>, compte `admin` et mot de passe `AIRFLOW_ADMIN_PASSWORD`. Depuis un poste, par tunnel SSH.
 - Lancer un entraînement sans attendre la nuit : bouton *Trigger* du DAG, ou `docker compose -f docker-compose.airflow.yml --env-file .env.airflow exec airflow-scheduler airflow dags trigger retrain_express_model`.

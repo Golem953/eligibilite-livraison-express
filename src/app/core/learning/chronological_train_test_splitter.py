@@ -14,7 +14,7 @@ class ChronologicalTrainTestSplitter(TrainTestSplitter):
     Utilisé pour les commandes de l'ERP, que le repository renvoie dans leur ordre
     d'arrivée. Quand les données grandissent, le jeu de test est toujours fait de
     commandes plus récentes que celles qui ont entraîné le modèle en service : les deux
-    modèles sont comparés sur des commandes qu'aucun n'a vues (ADR-0009).
+    modèles sont comparés sur des commandes qu'aucun n'a vues (ADR-0010).
     """
 
     def split(
