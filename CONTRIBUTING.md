@@ -23,13 +23,13 @@ Suivez la section « Installation » du [README](README.md) : `requirements-dev.
 
 Le projet suit un modèle dérivé de [Git Flow](https://nvie.com/posts/a-successful-git-branching-model/). La CI/CD ne déploie sur aucun serveur : elle publie seulement l'image sur GitHub Container Registry.
 
-| Branche | Rôle | Publie | Protégée |
-|---|---|---|---|
-| `feat/…`, `fix/…`, `chore/…` | travail | — | non |
-| `dev` | intégration | — | oui (ruleset) |
-| `release/x.y.z` | `dev` figé à l'instant du bouton | — | non (supprimée après la publication) |
-| `hotfix/x.y.z` | correctif urgent, parti de `main` | — | non (supprimée après la publication) |
-| `main` | production | image `x.y.z` sur ghcr.io, tag `vx.y.z` et release GitHub, à chaque merge | oui (ruleset) |
+| Branche | Rôle | Publie |
+|---|---|---|
+| `feat/…`, `fix/…`, `chore/…` | travail | — |
+| `dev` | intégration | — |
+| `release/x.y.z` | `dev` figé à l'instant du bouton, supprimée après la publication | — |
+| `hotfix/x.y.z` | correctif urgent, parti de `main`, supprimée après la publication | — |
+| `main` | production | image `x.y.z` sur ghcr.io, tag `vx.y.z` et release GitHub, à chaque merge |
 
 Un seul sens : `dev` → `release/x.y.z` → `main`. Jamais `main` → `dev`, sauf le report d'un hotfix.
 
@@ -63,7 +63,7 @@ git push -u origin feat/mon-sujet     # puis pull request vers dev
 - `minor` : nouveautés compatibles ;
 - `major` : rupture (contrat de l'API, variables du modèle…).
 
-Le workflow (`release.yml`) calcule la version à partir du dernier tag `vx.y.z`, crée `release/x.y.z` pile sur la tête de `dev`, sans aucun commit, et ouvre la PR vers `main` avec la liste des PR apportées. `main` ne bouge pas.
+Le workflow (`release.yml`) calcule la version à partir du dernier tag `vx.y.z`, crée `release/x.y.z` pile sur la tête de `dev`, sans aucun commit, et ouvre la PR vers `main` avec la liste des PR apportées, puis lance la CI sur la branche. `main` ne bouge pas.
 
 **Publication.** Mergez la PR `release/x.y.z` → `main` avec **Create a merge commit**. La CD publie l'image `x.y.z` sur ghcr.io, crée le tag `vx.y.z` et la release GitHub, puis supprime la branche de release. C'est fini : rien ne revient dans `dev`, car la release n'y a rien ajouté.
 
@@ -86,7 +86,7 @@ Pour corriger la production sans embarquer ce qui attend dans `dev`.
 
 3. **Correctif, commit, push**, puis PR `hotfix/x.y.z` → `main` : mêmes contrôles qu'une release, merge en **Create a merge commit**. Image `x.y.z`, tag `vx.y.z`, release GitHub, branche supprimée : comme une release.
 
-4. **Report dans `dev` : automatique.** Après la publication, la CD crée `fix/report-hotfix-x.y.z` sur le commit publié (= tag `vx.y.z`) et ouvre la PR vers `dev`, où la CI se lance. Il reste à la merger en **Create a merge commit**. En cas de conflit :
+4. **Report dans `dev` : automatique.** Après la publication, la CD crée `fix/report-hotfix-x.y.z` sur le commit publié (= tag `vx.y.z`) ouvre la PR vers `dev` et y lance la CI. Il reste à la merger en **Create a merge commit**. En cas de conflit :
 
    ```powershell
    git fetch origin
@@ -103,10 +103,10 @@ Pour corriger la production sans embarquer ce qui attend dans `dev`.
 
 ### Règles
 
-- **Aucun push direct sur `dev` ou `main`** : tout passe par une PR.
+- **Aucun push direct sur `dev` ou `main`** : tout passe par une PR. Aucun ruleset ne l'impose : c'est une règle d'équipe.
 - **Aucun fichier de version.** La version vient des tags : le bouton prend le dernier `vx.y.z` et calcule la suivante. Sur `main`, la CD lit la version dans le nom de la branche de la PR mergée (`release/x.y.z` ou `hotfix/x.y.z`). Le champ `version` de `pyproject.toml` n'est pas utilisé pour les releases.
 - **Toute publication passe par une release ou un hotfix.** Un commit de `main` qui ne vient ni d'une PR `release/x.y.z` ni d'une PR `hotfix/x.y.z` est refusé par la CD, et une version déjà taguée ne se republie jamais.
-- **`main` n'accepte que les PR depuis `release/x.y.z` et `hotfix/x.y.z`.** Le contrôle obligatoire « Origine de la PR vers main » (`origine.yml`) échoue pour toute autre branche source, pour une branche de fork du même nom et pour une version déjà taguée. Le format est exact : `release/1.2` ou `hotfix/correctif` sont refusés dès la PR. La PR peut s'ouvrir, mais le bouton *Merge* reste bloqué. GitHub ne sait pas filtrer nativement la branche source d'une PR : c'est ce contrôle, rendu obligatoire par le ruleset de `main`, qui l'impose.
+- **`main` n'accepte que les PR depuis `release/x.y.z` et `hotfix/x.y.z`.** Le contrôle « Origine de la PR vers main » (`origine.yml`) échoue pour toute autre branche source, pour une branche de fork du même nom et pour une version déjà taguée. Le format est exact : `release/1.2` ou `hotfix/correctif` sont refusés dès la PR. Sans ruleset, ce contrôle ne bloque pas le bouton *Merge* : **ne mergez jamais une PR vers `main` dont il est rouge**. Si cela arrive quand même, la CD refuse de publier.
 - **Ne jamais committer sur une branche `release/*`.** Elle doit rester égale à `dev`. Un correctif se fait dans `dev` (PR), puis par une nouvelle release. Pour remplacer une release pas encore mergée : fermez sa PR, supprimez la branche et relancez le bouton.
 - **Merger les PR de release, de hotfix et de report en « Create a merge commit »**, jamais en squash ni en rebase : ces deux modes réécrivent les commits, `main` contiendrait des commits que `dev` n'a pas, et les releases suivantes finiraient en conflit.
 - **Une seule release à la fois** : le bouton refuse s'il y a déjà une PR de release ou de hotfix ouverte.
@@ -114,12 +114,8 @@ Pour corriger la production sans embarquer ce qui attend dans `dev`.
 
 ### Mise en place (une seule fois, par un administrateur du dépôt)
 
-- **Jeton du bouton Release** : un *fine-grained personal access token* limité à ce dépôt, avec les permissions *Contents* et *Pull requests* en lecture/écriture, enregistré dans le secret `RELEASE_TOKEN` (*Settings → Secrets and variables → Actions*). Une branche ou une PR créée avec le `GITHUB_TOKEN` ne déclenche aucun workflow : sans ce jeton, la CI et le contrôle d'origine ne tourneraient pas sur la PR de release ni sur la PR de report.
-- **Rulesets** (*Settings → Rules → Rulesets*) :
-  - `dev` et `main` : pull request obligatoire, pas de push direct ni de suppression ;
-  - `main` : contrôles obligatoires « Origine de la PR vers main », « Lint (Ruff) », « Tests (pytest) » et « Build de l'image prod », et méthode de merge autorisée : *merge* uniquement.
+- **Autoriser le bouton à ouvrir des PR** : *Settings → Actions → General → Workflow permissions*, cochez **Allow GitHub Actions to create and approve pull requests**. Le bouton et la CD utilisent le `GITHUB_TOKEN` ; une branche ou une PR créée avec ce jeton ne déclenche aucun workflow, c'est pourquoi ils lancent eux-mêmes la CI sur la branche créée (elle apparaît dans les contrôles de la PR). Le contrôle d'origine, lui, ne tourne pas sur ces PR : leur nom de branche est garanti par le bouton.
 - **Première release** : GitHub n'affiche le bouton qu'une fois `release.yml` présent sur `main`. La première se fait donc à la main : `release/x.y.z` créée sur la tête de `dev`, PR vers `main`, merge. Elle porte une version strictement supérieure au dernier tag (ici `v0.2.0`, donc `release/0.3.0`).
-- **Première PR ouverte par le jeton** : si GitHub met ses contrôles en attente (« Action required »), cliquez une fois sur *Approve and run*.
 
 ## CI/CD
 

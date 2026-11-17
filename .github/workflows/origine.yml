@@ -1,9 +1,10 @@
 # Contrôle « Origine de la PR vers main » : main n'accepte que release/x.y.z et hotfix/x.y.z.
 #
-# GitHub ne sait pas filtrer nativement la branche source d'une PR : ce contrôle,
-# rendu obligatoire par le ruleset de main, bloque le bouton Merge pour toute autre
-# branche, pour une branche de fork du même nom, et pour une version déjà taguée.
-# Le format est exact, car la CD lit la version dans le nom de la branche.
+# GitHub ne sait pas filtrer nativement la branche source d'une PR : ce contrôle
+# signale en rouge toute autre branche, une branche de fork du même nom et une
+# version déjà taguée. Sans ruleset, il ne bloque pas le bouton Merge : c'est la CD
+# qui refuse ensuite de publier. Le format est exact, car la CD lit la version dans
+# le nom de la branche.
 name: Origine
 
 on:
