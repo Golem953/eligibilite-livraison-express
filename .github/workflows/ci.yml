@@ -14,6 +14,9 @@ on:
   pull_request:
     branches: [dev, main]
   workflow_call:
+  # Lancée par le bouton Release et la CD sur les branches qu'ils créent : une branche
+  # créée avec le GITHUB_TOKEN ne déclenche pas le push ci-dessus.
+  workflow_dispatch:
 
 permissions:
   contents: read

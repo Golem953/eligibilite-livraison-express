@@ -5,9 +5,10 @@
 # liste des PR apportées. main ne bouge pas : la mise en production se fait en
 # mergeant cette PR (« Create a merge commit »), puis cd.yml prend le relais.
 #
-# Le secret RELEASE_TOKEN est obligatoire : une branche ou une PR créée avec le
-# GITHUB_TOKEN ne déclenche aucun workflow, donc ni la CI ni le contrôle d'origine
-# ne tourneraient sur la PR, et elle resterait bloquée.
+# Une branche ou une PR créée avec le GITHUB_TOKEN ne déclenche aucun workflow : le
+# bouton lance donc lui-même la CI sur release/x.y.z (workflow_dispatch, autorisé).
+# Prérequis : Settings → Actions → General → « Allow GitHub Actions to create and
+# approve pull requests » coché.
 name: Release
 
 on:
@@ -21,7 +22,9 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write       # créer la branche release/x.y.z
+  pull-requests: write  # ouvrir la PR vers main
+  actions: write        # lancer la CI sur la branche
 
 concurrency:
   group: release
@@ -34,15 +37,11 @@ jobs:
     steps:
       - name: Créer release/x.y.z et la PR vers main
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           NIVEAU: ${{ inputs.niveau }}
         run: |
           set -euo pipefail
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Secret RELEASE_TOKEN absent : voir « Jeton du bouton Release » dans CONTRIBUTING.md."
-            exit 1
-          fi
 
           # Une seule release à la fois, et jamais pendant un hotfix ou son report dans dev.
           en_cours=$(gh pr list --state open --limit 100 --json headRefName,baseRefName --jq '
@@ -84,4 +83,5 @@ jobs:
             "Release \`$version\` (${dernier:-aucune version précédente} → v$version, niveau \`$NIVEAU\`), créée sur la tête de dev ($sha)." \
             "À merger avec **Create a merge commit**. Ne rien committer sur cette branche." \
             "$corps")")
-          echo "Release $version : $url" >> "$GITHUB_STEP_SUMMARY"
+          gh workflow run ci.yml --ref "$branche"
+          echo "Release $version : $url (CI lancée sur $branche)" >> "$GITHUB_STEP_SUMMARY"

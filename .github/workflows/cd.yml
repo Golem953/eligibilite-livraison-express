@@ -127,22 +127,21 @@ jobs:
     needs: [version, publish]
     if: startsWith(needs.version.outputs.branche, 'hotfix/')
     permissions:
-      contents: read
+      contents: write       # créer la branche de report
+      pull-requests: write  # ouvrir la PR vers dev
+      actions: write        # lancer la CI sur la branche
     steps:
-      # RELEASE_TOKEN, pas GITHUB_TOKEN : sinon la CI ne se lancerait pas sur la PR de report.
       - name: Ouvrir la PR fix/report-hotfix-x.y.z vers dev
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::Secret RELEASE_TOKEN absent : créez fix/report-hotfix-$VERSION depuis le tag v$VERSION et ouvrez la PR vers dev à la main."
-            exit 1
-          fi
           branche="fix/report-hotfix-$VERSION"
           gh api "repos/$GH_REPO/git/refs" -f ref="refs/heads/$branche" -f sha="$GITHUB_SHA" > /dev/null
           gh pr create --base dev --head "$branche" --title "Report du hotfix $VERSION dans dev" --body "$(printf '%s\n\n%s' \
             "Report du hotfix \`$VERSION\` (tag \`v$VERSION\`), seule entrée de main dans dev." \
             "À merger avec **Create a merge commit**, jamais en squash ni en rebase. En cas de conflit : \`git switch $branche\`, \`git merge origin/dev\`, résoudre, commit, push.")"
+          # Créée avec le GITHUB_TOKEN, la branche ne déclenche pas la CI : on la lance.
+          gh workflow run ci.yml --ref "$branche"
