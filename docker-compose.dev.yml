@@ -1,13 +1,13 @@
 # Environnement de développement de livraison-express-lite (ADR-0003).
 #
-#   docker compose --env-file .env.dev up -d --build    API + interface MLflow
-#   docker compose --env-file .env.dev run --rm train   entraîne le modèle
-#   docker compose --env-file .env.dev restart api      sert le nouveau modèle
+#   docker compose -f docker-compose.dev.yml --env-file .env.dev up -d --build    API + interface MLflow
+#   docker compose -f docker-compose.dev.yml --env-file .env.dev run --rm train   entraîne le modèle
+#   docker compose -f docker-compose.dev.yml --env-file .env.dev restart api      sert le nouveau modèle
 #
 # Chaque environnement a son compose et son fichier de variables (voir CONTRIBUTING.md) :
-#   dev   sur son poste, branches feat/* et dev   -> docker-compose.yml       + .env.dev
+#   dev   sur son poste, branches feat/* et dev   -> docker-compose.dev.yml   + .env.dev
 #   test  branche release/<version>               -> docker-compose.test.yml  + .env.test
-#   prod  branche main                            -> docker-compose.prod.yml  + .env.prod
+#   prod  branche main                            -> docker-compose.prod.yml  + .env.prod (API + Airflow)
 #
 # Une clé absente ou vide prend la valeur par défaut indiquée après « :- ».
 
@@ -81,7 +81,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Lancé à la demande, puis s'arrête (ADR-0007) : docker compose run --rm train
+  # Lancé à la demande, puis s'arrête (ADR-0007) : docker compose -f docker-compose.dev.yml run --rm train
   train:
     <<: *app
     command: ["python", "-m", "app", "train"]
@@ -118,7 +118,7 @@ services:
     restart: unless-stopped
 
   # --- Dev uniquement : un MongoDB et un ETL simulés à la place de ceux de l'ERP (ADR-0010) ---
-  #   docker compose --env-file .env.dev --profile etl up -d --build
+  #   docker compose -f docker-compose.dev.yml --env-file .env.dev --profile etl up -d --build
   #   TRAINING_SOURCE_URL=mongodb://mongodb:27017/livraison_express dans .env.dev, puis train.
   # En prod, ces deux services n'existent pas : l'entraînement lit le MongoDB de l'ERP.
   mongodb:

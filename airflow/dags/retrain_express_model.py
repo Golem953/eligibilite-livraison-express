@@ -16,8 +16,8 @@ Chaque nuit :
    charge le modèle qu'au démarrage.
 
 Toute la configuration vient des variables d'environnement ``RETRAIN_*`` des conteneurs
-Airflow (voir ``.env.airflow.example``). Airflow ne parle à Docker qu'à travers un proxy
-qui limite les appels autorisés (``docker-proxy`` dans ``docker-compose.airflow.yml``).
+Airflow (voir ``.env.prod.example``). Airflow ne parle à Docker qu'à travers un proxy
+qui limite les appels autorisés (``docker-proxy`` dans ``docker-compose.prod.yml``).
 """
 
 from __future__ import annotations

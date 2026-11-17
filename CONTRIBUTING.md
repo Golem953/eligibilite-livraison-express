@@ -147,20 +147,20 @@ Au premier envoi, le paquet est privé sur GitHub : pour le rendre public, *Pack
 
 Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flow a la sienne. Pour travailler et valider une release, les images se construisent avec Docker Compose ; l'image de production, elle, est publiée par la CD (voir « CI/CD »).
 
-Chaque environnement a son fichier Compose et son fichier de variables `.env.<environnement>`, passé à Compose avec `--env-file`.
+Chaque environnement a **un seul** fichier Compose, `docker-compose.<environnement>.yml` (`dev`, `test`, `prod`), complet et autonome, et son fichier de variables `.env.<environnement>`, passé à Compose avec `--env-file`. Les réglages communs (durcissement, volume, healthcheck) sont recopiés dans chacun : une modification commune se fait dans les trois.
 
 | Moment | Branche | Compose | Variables | Image | Base MongoDB (ADR-0010) |
 |---|---|---|---|---|---|
-| Développement sur son poste | `feat/*`, `dev` | `docker-compose.yml` | `.env.dev` | `livraison-express:dev`, construite : tout le dépôt, avec pytest et ruff | Aucune par défaut (`memory://`) ; MongoDB et ETL simulés avec le profil `etl` |
+| Développement sur son poste | `feat/*`, `dev` | `docker-compose.dev.yml` | `.env.dev` | `livraison-express:dev`, construite : tout le dépôt, avec pytest et ruff | Aucune par défaut (`memory://`) ; MongoDB et ETL simulés avec le profil `etl` |
 | Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `docker-compose.test.yml` | `.env.test` | `livraison-express:test`, construite : identique à la prod | MongoDB de test, avec authentification, alimenté par l'ETL simulé |
 | Fusion dans `main` | `main` | `docker-compose.prod.yml` | `.env.prod` | `ghcr.io/golem953/eligibilite-livraison-express:<version>`, publiée par la CD | MongoDB de l'ERP, service externe joint par son adresse, lu en lecture seule |
 
 ### En développement
 
 ```powershell
-docker compose --env-file .env.dev up -d --build
-docker compose --env-file .env.dev run --rm train
-docker compose --env-file .env.dev restart api
+docker compose -f docker-compose.dev.yml --env-file .env.dev up -d --build
+docker compose -f docker-compose.dev.yml --env-file .env.dev run --rm train
+docker compose -f docker-compose.dev.yml --env-file .env.dev restart api
 ```
 
 ### Pour valider une release
@@ -177,10 +177,10 @@ L'ETL simulé alimente le MongoDB de test au format de l'ERP. L'entraînement le
 
 ### Pour la production
 
-Sur `main`, après la fusion et le tag, avec un fichier `.env.prod` copié depuis `.env.prod.example`. Rien n'est construit : `APP_VERSION` choisit l'image publiée par la CD.
+Sur `main`, après la fusion et le tag, avec un fichier `.env.prod` copié depuis `.env.prod.example` et ses secrets remplis. L'application n'est pas construite : `APP_VERSION` choisit l'image publiée par la CD (`--build` ne construit que l'image d'Airflow).
 
 ```powershell
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm train
 docker compose -f docker-compose.prod.yml --env-file .env.prod restart api
 ```
@@ -200,22 +200,18 @@ Les étapes `test` et `prod` étant identiques, l'image validée en release est 
 
 ### Réentraînement automatique (Airflow)
 
-Sur la machine de prod, à côté de `docker-compose.prod.yml`, avec un fichier `.env.airflow` copié depuis `.env.airflow.example` et ses secrets remplis :
-
-```powershell
-docker compose -f docker-compose.airflow.yml --env-file .env.airflow up -d --build
-```
+Airflow fait partie de `docker-compose.prod.yml` : il démarre avec la prod (commande ci-dessus), avec les secrets `AIRFLOW_*` de `.env.prod`.
 
 Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0011).
 
 - Interface : <http://127.0.0.1:8080>, compte `admin` et mot de passe `AIRFLOW_ADMIN_PASSWORD`. Depuis un poste, par tunnel SSH.
-- Lancer un entraînement sans attendre la nuit : bouton *Trigger* du DAG, ou `docker compose -f docker-compose.airflow.yml --env-file .env.airflow exec airflow-scheduler airflow dags trigger retrain_express_model`.
+- Lancer un entraînement sans attendre la nuit : bouton *Trigger* du DAG, ou `docker compose -f docker-compose.prod.yml --env-file .env.prod exec airflow-scheduler airflow dags trigger retrain_express_model`.
 - Forcer un entraînement sous le seuil : remettre la variable Airflow `retrain_last_labeled_orders` à `0`, puis déclencher le DAG.
-- Pour une nouvelle version de l'application, mettre à jour `APP_VERSION` dans `.env.prod` **et** dans `.env.airflow`.
+- Pour une nouvelle version de l'application, mettre à jour `APP_VERSION` dans `.env.prod`, puis relancer `up -d` : l'API et Airflow prennent la nouvelle image.
 
 ### Règles pour les fichiers `.env.<environnement>`
 
-- Créez `.env.test`, `.env.prod` et `.env.airflow` à partir de leurs modèles `.env.*.example`, sur la machine qui en a besoin.
+- Récupérez `.env.dev`, `.env.test` ou `.env.prod` depuis les GitHub Environments du dépôt : `.\scripts\env.ps1 pull <development|test|production>` (voir README, « Variables d'environnement Docker »). Les modèles `.env.*.example` documentent chaque clé ; après une modification d'un fichier local, renvoyez-le avec `.\scripts\env.ps1 push <development|test|production>`.
 - Ne laissez aucune clé vide : l'application refuse une valeur vide pour un nombre.
 - Ces fichiers sont lus par Compose, pas par l'application. Ne mettez pas `APP_ENV` dans le fichier `.env` lu par l'application : elle refuse les clés qu'elle ne connaît pas.
 - Les fichiers `.env.*` sont exclus de git (sauf `.env.example` et les modèles `.env.*.example`), car ceux de test et de prod contiennent des secrets.

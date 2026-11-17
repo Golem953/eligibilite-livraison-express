@@ -71,6 +71,31 @@ mlflow ui --backend-store-uri ./mlruns
 
 Puis ouvrir http://127.0.0.1:5000.
 
+### Variables d'environnement Docker (GitHub Environments)
+
+Les fichiers `.env.dev`, `.env.test` et `.env.prod`, lus par `docker-compose.dev.yml`, `docker-compose.test.yml` et `docker-compose.prod.yml`, ne sont pas dans git. Leur contenu est stocké sur GitHub, dans les Environments `development`, `test` et `production` du dépôt (*Settings → Environments*).
+
+**Tout y est en _variables_, y compris les mots de passe, et c'est un choix volontaire.** GitHub ne laisse jamais relire un _secret_ (ni par l'interface, ni par l'API, ni par `gh`) : seul un workflow peut l'utiliser. Une _variable_, elle, se relit avec `gh`. C'est ce qui permet de recréer le `.env` de n'importe quel environnement, sur n'importe quel poste et depuis n'importe quelle branche, puis de simuler un déploiement avec l'image publiée sur ghcr.io, comme le ferait une CD. Avec des secrets, cette récupération serait impossible.
+
+Pour créer le `.env` d'un environnement, puis lancer l'image publiée :
+
+```powershell
+.\scripts\env.ps1 pull production  # GitHub Environment "production" -> .env.prod
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+Même chose avec `development` (→ `.env.dev`) ou `test` (→ `.env.test`). Pour modifier une valeur, changez-la sur GitHub puis relancez `pull`. Pour envoyer un fichier local complet : `.\scripts\env.ps1 push production`. Le script utilise `gh`, connecté avec un compte qui administre le dépôt.
+
+**Ce qui devrait être un secret** dans un vrai projet : ces valeurs donnent accès à des données ou à des comptes. Elles iraient en _secrets_ d'Environment, utilisés par un vrai déploiement (une CD qui écrit le `.env` sur le serveur), et ne seraient jamais relisibles.
+
+| Environment | Variables qui devraient être des secrets |
+|---|---|
+| `development` | aucune : pas de mot de passe, commandes en mémoire (`memory://`) |
+| `test` | `MONGO_ROOT_PASSWORD`, `MONGO_TRAINING_PASSWORD`, `MONGO_ETL_PASSWORD` |
+| `production` | `TRAINING_SOURCE_URL` (contient le mot de passe du compte MongoDB de l'ERP), `AIRFLOW_ADMIN_PASSWORD`, `AIRFLOW_DB_PASSWORD`, `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET`, `AIRFLOW_API_SECRET_KEY` |
+
+Les autres valeurs (version de l'image, seuil du modèle, ports, planification…) ne sont pas sensibles : ce sont de vraies variables.
+
 ## Utilisation
 
 Toutes les commandes se lancent **depuis la racine du dépôt**, environnement virtuel activé.
@@ -238,7 +263,7 @@ L'essentiel de ce qui reste vient de `scipy`, `pandas`, `scikit-learn` et `numpy
 - **Image de base figée** par version exacte et empreinte (`python:3.13.18-slim@sha256:…`) : deux builds produisent la même image.
 - **Aucun secret** : `.env` est exclu par `.dockerignore`, aucun mot de passe dans `ENV`.
 
-**Au lancement (`docker-compose.yml`, `docker-compose.test.yml`, `docker-compose.prod.yml`), pour tous les services :**
+**Au lancement (`docker-compose.dev.yml`, `docker-compose.test.yml`, `docker-compose.prod.yml`), pour tous les services :**
 
 - **Système de fichiers en lecture seule** (`read_only`) : seuls le volume `/data` et `/tmp` sont modifiables.
 - **Aucune capacité Linux** (`cap_drop: ALL`) ; `init-volume` ne récupère que `CHOWN`.

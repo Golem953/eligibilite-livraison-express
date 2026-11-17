@@ -203,7 +203,7 @@ La plateforme doit :
   - un `.dockerignore` qui exclut au minimum `.env`, `.venv/`, `notebooks/` et les artéfacts ;
   - un `docker-compose.yml` avec les services `api`, `mlflow` et `db`. PostgreSQL démarre avec un profil `prod`, puisqu'en dev les commandes sont en mémoire (ADR-0001) ;
   - un healthcheck Docker qui interroge `/health`.
-- **Le `docker-compose.yml` est le descripteur de déploiement.** Tout service de prod y figure. Le choix entre dev, test et prod se fait par `APP_ENV`, dans le fichier `.env.<environnement>` passé à Compose.
+- **Un fichier Compose par environnement est le descripteur de déploiement** : `docker-compose.dev.yml`, `docker-compose.test.yml` et `docker-compose.prod.yml`, chacun complet. Tout service de prod, Airflow compris, figure dans `docker-compose.prod.yml`. Les variables viennent du fichier `.env.<environnement>` passé à Compose.
 - **Écoute réseau** : dans le conteneur, l'API écoute sur `0.0.0.0` (la CLI utilise `127.0.0.1` par défaut, ce qui la rendrait injoignable depuis l'hôte). C'est le compose qui limite l'exposition (ADR-0004).
 - **Dépendances** : `requirements.txt` contient l'environnement complet de développement, y compris `pywin32`, qui ne s'installe pas dans une image Linux. Il faut séparer les dépendances d'exécution (`requirements.txt`) et de développement (`requirements-dev.txt`).
 - **Déploiement manuel en attendant la CI/CD** : sur la machine cible, récupérer le code (`git pull`) puis lancer `docker compose up -d --build`. Plus tard, la CI construira les images et les publiera dans un registre (par exemple GitHub Container Registry) : le VPS n'aura plus qu'à les télécharger.
@@ -738,7 +738,7 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 | Dev, test du cycle complet | MongoDB de dev (`mongodb://mongodb:27017/livraison_express`) | L'ETL simulé (`etl_simulator/`), au format de l'ERP |
 | Prod | MongoDB de l'ERP, compte en lecture seule | L'ETL de l'ERP |
 
-- **Le MongoDB et l'ETL de dev** sont deux services du profil `etl` de `docker-compose.yml` (`docker compose --env-file .env.dev --profile etl up -d --build`). Ils n'existent pas en prod.
+- **Le MongoDB et l'ETL de dev** sont deux services du profil `etl` de `docker-compose.dev.yml` (`docker compose -f docker-compose.dev.yml --env-file .env.dev --profile etl up -d --build`). Ils n'existent pas en prod.
 - **L'ETL simulé n'utilise pas l'ERP simulé** : `erp_prod_test` joue l'ERP de prod, hors du dépôt, et l'application n'en dépend pas. En prod, `train` joint son MongoDB par son adresse réseau (`TRAINING_SOURCE_URL`), sans réseau Docker partagé : remplacer l'ERP simulé par un vrai serveur ne demande que de changer cette URL. L'ETL simulé écrit directement ce que le vrai ETL chargerait : des commandes au format de l'ERP (`clear`, `suburb`, `business`…), avec un label calculé par une règle métier simulée.
 - **Le générateur `memory://` n'a pas les mêmes valeurs que l'ERP** (`normal`, `banlieue`, `premium`…) : un modèle entraîné en `memory://` ne dit rien de son comportement sur les données de l'ERP. Pour tester comme en prod, on passe par le MongoDB de dev.
 
@@ -797,7 +797,7 @@ Contraintes :
 
 ### Décision
 
-**Option B : Airflow**, dans son propre compose (`docker-compose.airflow.yml`), sur la machine de prod.
+**Option B : Airflow**, dans `docker-compose.prod.yml`, à côté de l'application, sur la machine de prod.
 
 **Déclenchement : chaque nuit, et seulement s'il y a assez de nouvelles données.** Le DAG `retrain_express_model` tourne chaque nuit à 2 h. Il n'entraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` commandes labellisées (100 par défaut) sont arrivées depuis le dernier entraînement. Un sensor en continu aurait occupé une place d'exécution en permanence, pour une réactivité inutile : les labels arrivent par lots de l'ETL.
 
@@ -821,7 +821,7 @@ Raisons :
 
 - **Accès à Docker par un proxy** : le socket Docker donne les droits de root sur la machine. Airflow n'y accède qu'à travers `docker-proxy` (`tecnativa/docker-socket-proxy`), qui n'autorise que les conteneurs, les images, le démarrage et le redémarrage. Le proxy n'a pas de port publié.
 - **Le conteneur d'entraînement est moins durci** que dans les composes : `DockerOperator` ne permet pas `read_only` ni `cap_drop`. Il tourne quand même avec l'UID 1000, sans droits root.
-- **Secrets** : l'URL du MongoDB de l'ERP passe par `private_environment`, jamais affichée dans les logs ni l'interface. Les secrets d'Airflow (base, clé Fernet, JWT) sont dans `.env.airflow`, jamais versionné.
+- **Secrets** : l'URL du MongoDB de l'ERP passe par `private_environment`, jamais affichée dans les logs ni l'interface. Les secrets d'Airflow (base, clé Fernet, JWT) sont dans `.env.prod`, jamais versionné.
 - **Interface réservée à l'équipe** : port publié sur `127.0.0.1` uniquement, accès par tunnel SSH (ADR-0009), compte admin du gestionnaire FAB.
 - **Le DAG est actif dès son chargement** (`DAGS_ARE_PAUSED_AT_CREATION=false`). Au premier démarrage, Airflow lance aussitôt le run de la dernière nuit passée.
 - **Comportement de `train` en dev** : il se compare aussi au modèle existant. Avec les mêmes données synthétiques, le nouveau modèle est identique, donc pas meilleur : le modèle existant est conservé.
