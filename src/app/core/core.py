@@ -7,7 +7,7 @@ configuration reçue en paramètre :
 - `build_training_service` pour la commande `train`, avec la source des commandes
   choisie par `build_order_repository`.
 
-Les deux sont indépendants (ADR-0003) : l'API n'importe ni MLflow ni le code
+Les deux sont indépendants (ADR-0007) : l'API n'importe ni MLflow ni le code
 d'entraînement. Changer d'implémentation (PostgreSQL, registre MLflow...) se fait
 ici, sans toucher au reste du code.
 """
@@ -49,7 +49,7 @@ def build_prediction_service(settings: Settings) -> MLPredict | None:
 
 
 def build_order_repository(settings: Settings) -> OrderRepositoryInterface:
-    """Choisit la source des commandes selon `TRAINING_SOURCE_URL` (ADR-0009)."""
+    """Choisit la source des commandes selon `TRAINING_SOURCE_URL` (ADR-0010)."""
     url = settings.training_source_url
     if url == "memory://":
         from ..infrastructure.implementation.dev.order_generator import generate_labeled_orders
@@ -80,7 +80,7 @@ def build_training_service(settings: Settings):
     from .training_service import TrainingService
 
     # Commandes de l'ERP : test sur les plus récentes, pour comparer le nouveau modèle et
-    # le modèle en service sur des commandes qu'aucun n'a vues (ADR-0009). En mémoire :
+    # le modèle en service sur des commandes qu'aucun n'a vues (ADR-0010). En mémoire :
     # découpage aléatoire du notebook.
     splitter_class = (
         TrainTestSplitter

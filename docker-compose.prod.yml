@@ -7,7 +7,7 @@
 # Rien n'est construit ici : l'image est celle que la CD a publiée sur ghcr.io,
 # dans la version APP_VERSION (voir CONTRIBUTING.md, « CI/CD »).
 #
-# La base est le MongoDB de l'ERP (ADR-0009). C'est un service externe, sur une
+# La base est le MongoDB de l'ERP (ADR-0010). C'est un service externe, sur une
 # autre machine : ce compose ne le lance pas et ne partage aucun réseau Docker avec
 # lui. `train` s'y connecte par son adresse, donnée par TRAINING_SOURCE_URL, comme à
 # n'importe quel service distant. L'API ne s'y connecte jamais.
@@ -69,7 +69,7 @@ services:
   api:
     <<: *app
     ports:
-      # Uniquement sur la machine : le reverse proxy expose l'API (ADR-0004, ADR-0005).
+      # Uniquement sur la machine : le reverse proxy expose l'API (ADR-0003, ADR-0004).
       - "127.0.0.1:${API_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
@@ -79,7 +79,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Lancé à la demande, puis s'arrête (ADR-0003). Lit les commandes de l'ERP.
+  # Lancé à la demande, puis s'arrête (ADR-0007). Lit les commandes de l'ERP.
   train:
     <<: *app
     command: ["python", "-m", "app", "train"]
@@ -89,7 +89,7 @@ services:
       MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
       RANDOM_SEED: ${RANDOM_SEED:-42}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # Adresse du MongoDB de l'ERP, avec un compte en lecture seule (ADR-0009).
+      # Adresse du MongoDB de l'ERP, avec un compte en lecture seule (ADR-0010).
       TRAINING_SOURCE_URL: ${TRAINING_SOURCE_URL:?TRAINING_SOURCE_URL manquant (MongoDB de l'ERP)}
       MODEL_PATH: /data/artifacts/express_delivery_model.joblib
       MLFLOW_TRACKING_URI: /data/mlruns
@@ -111,7 +111,7 @@ services:
     volumes:
       - app_data:/data
     ports:
-      # Réservé à l'équipe, par tunnel SSH (ADR-0008).
+      # Réservé à l'équipe, par tunnel SSH (ADR-0009).
       - "127.0.0.1:${MLFLOW_PORT:-5000}:5000"
     depends_on:
       init-volume:

@@ -1,4 +1,4 @@
-"""ETL simulé, pour le développement uniquement (ADR-0009).
+"""ETL simulé, pour le développement uniquement (ADR-0010).
 
 En prod, l'ETL de l'ERP met à jour le MongoDB de l'ERP avec les commandes et leur
 label (`express_eligible`). En dev, il n'y a ni ERP ni ETL : ce programme écrit dans
