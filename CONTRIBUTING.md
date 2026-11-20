@@ -185,9 +185,9 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm train
 docker compose -f docker-compose.prod.yml --env-file .env.prod restart api
 ```
 
-Le MongoDB de l'ERP est un service externe, sur une autre machine : `train` le joint par l'adresse de `TRAINING_SOURCE_URL`, sans réseau Docker partagé. L'API ne s'y connecte jamais.
+Le MongoDB des analystes est un service externe, sur une autre machine, alimenté par l'ERP dans un seul sens : `train` le joint par l'adresse de `TRAINING_SOURCE_URL`, sans réseau Docker partagé. L'API ne s'y connecte jamais.
 
-Faute de serveur, l'ERP est simulé par le dossier `erp_prod_test`, **hors de ce dépôt**, à côté du projet. Il se lance dans ses propres conteneurs et publie MongoDB sur un port de sa machine. Le port 27117 évite un éventuel MongoDB déjà installé sur le poste (service Windows sur 27017) :
+Faute de serveur, l'ERP et ce MongoDB sont simulés par le dossier `erp_prod_test`, **hors de ce dépôt**, à côté du projet. Il se lance dans ses propres conteneurs et publie MongoDB sur un port de sa machine. Le port 27117 évite un éventuel MongoDB déjà installé sur le poste (service Windows sur 27017) :
 
 ```powershell
 cd ..\erp_prod_test
@@ -195,6 +195,14 @@ $env:MONGO_PORT = "27117"; docker compose -f docker-compose.erp.yml up -d --buil
 ```
 
 Sur le même poste, `TRAINING_SOURCE_URL=mongodb://host.docker.internal:27117/livraison_express`. Sur un autre poste, remplacer `host.docker.internal` par l'adresse IP de la machine de l'ERP.
+
+L'ERP simulé écrit ses commandes **sans label** : le résultat réel d'une livraison n'est connu qu'après coup. Sans label, `train` n'a rien à apprendre. Le labelliseur simulé joue ce résultat réel : il ajoute `express_eligible` aux nouvelles commandes, en continu, avec la règle métier cachée du notebook (ADR-0010) :
+
+```powershell
+docker compose -f etl_simulator/docker-compose.labeler.yml up -d --build
+```
+
+`ERP_MONGO_URI` change l'adresse du MongoDB (par défaut `mongodb://host.docker.internal:27117/livraison_express`).
 
 Les étapes `test` et `prod` étant identiques, l'image validée en release est exactement celle qui part en production.
 
