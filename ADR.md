@@ -17,7 +17,7 @@ Ce que le stockage doit permettre :
 
 - **Écrire une ligne à chaque appel de l'API.** Les écritures sont fréquentes et unitaires. Elles peuvent être concurrentes si l'API tourne avec plusieurs workers.
 - **Conserver la prédiction et la version du modèle** qui l'a produite (`PredictionEntity.model_version`), pour l'audit et le monitoring.
-- **Retrouver une prédiction** à partir de la commande, pour l'audit et pour comparer les versions pendant un canary (ADR-0005) : il faut pouvoir **joindre** commandes et prédictions.
+- **Retrouver une prédiction** à partir de la commande, pour l'audit et pour comparer deux versions du modèle sur les mêmes commandes : il faut pouvoir **joindre** commandes et prédictions.
 
 Le réentraînement ne passe pas par cette base : il utilise uniquement les commandes labellisées de l'ERP, mises à jour par un ETL (ADR-0010). Les commandes reçues par l'API n'ont donc pas besoin d'être complétées après coup avec leur résultat réel.
 
@@ -77,6 +77,7 @@ C'est acceptable en dev, car les données sont synthétiques et regénérées au
 
 **Status :** Accepté
 **Date :** 26/10/2026
+**Révision :** 20/11/2026. La décision décrit ce qui est en place : modèle servi depuis un fichier sur le volume partagé, MLflow en stockage fichiers. Le Model Registry et PostgreSQL sont reportés.
 
 ### Contexte
 
@@ -104,58 +105,42 @@ Ce que le stockage doit permettre :
 
 ### Décision
 
-**Option C : MLflow Tracking + Model Registry.**
+**Option B pour le modèle servi, avec MLflow Tracking pour l'historique des entraînements. Le Model Registry (option C) est reporté.**
 
-- **Simplicité d'utilisation** : le registre et l'interface web évitent de réinventer le versioning, les métadonnées et le retour arrière.
-- **Métriques au service de la production** : chaque entraînement enregistre ses métriques, qui servent à juger si une version mérite de passer en production.
-- **Visibilité** : savoir à tout moment quelle version tourne et où en sont les performances.
-- **Continuité** : `MLTrainer` journalise déjà ses runs dans MLflow. Il reste à configurer un serveur et à inscrire le modèle dans le registre.
-- **Apprentissage** : MLflow est un outil standard du MLOps. La courbe d'apprentissage est acceptée, et même recherchée.
+Le modèle servi est un fichier. MLflow conserve à côté l'historique de tous les entraînements, sans serveur ni base de données.
 
-**Backend store de MLflow (métadonnées et Model Registry) : des fichiers locaux en dev ; en CI et en prod, une base dédiée, séparée de celle des commandes, sur le même moteur que l'ADR-0001.**
-
-| Environnement | Base des commandes (ADR-0001) | Backend store MLflow |
+| | Modèle servi (lu par l'API) | Historique des entraînements (MLflow) |
 |---|---|---|
-| Dev | En mémoire (`InMemoryOrderRepository`) | Dossier `mlruns/` à la racine du projet (stockage fichiers de MLflow) |
-| CI / Prod | Base `commandes` | Base `mlflow`, **dans le même conteneur PostgreSQL** |
+| Contenu | `express_delivery_model.joblib`, avec `metrics.json` et `features.json` | Un run par entraînement : paramètres, métriques (y compris celles du modèle en service, `champion_*`) et une copie du modèle |
+| Écrit par | `train`, via `FileModelRepository`, **seulement si le nouveau modèle est promu** (ADR-0011) | `train`, via `MlflowTracker`, à **chaque** entraînement |
+| Emplacement avec Docker (dev, test, prod) | `/data/artifacts/` sur le volume `app_data` (`MODEL_PATH`) | `/data/mlruns` sur le même volume (`MLFLOW_TRACKING_URI`, stockage fichiers) |
+| Emplacement sans Docker | `notebooks/artifacts/` | Dossier `mlruns/` du répertoire courant |
 
-- **Séparer les bases** évite que les tables de MLflow et les nôtres se mélangent (collisions de noms, table `alembic_version` partagée si nos migrations utilisent aussi Alembic). Chaque base garde ses propres migrations et sauvegardes.
-- **Un seul conteneur PostgreSQL** suffit : pas de second serveur à maintenir.
-- **En dev, MLflow stocke tout dans des fichiers** (dossier `mlruns/`) : runs, métriques, registre, alias et fichiers des modèles. Aucune base de données et aucun serveur ne sont nécessaires. Contrairement aux commandes, ces données ne peuvent pas être en mémoire : l'historique des runs et le registre doivent survivre d'un entraînement à l'autre.
-**Artifact store (fichiers du modèle) : un volume Docker monté sur le conteneur MLflow.**
+Le service `mlflow` des composes ne lance que l'interface web (`mlflow ui`) sur ce dossier. Ni l'entraînement ni l'API ne passent par lui.
 
-- Les fichiers des modèles (`model.pkl` ou `model.skops`, `MLmodel`, `requirements.txt`…) sont écrits dans un dossier du conteneur MLflow (par exemple `/mlflow/mlartifacts`), monté sur un volume Docker. Ils survivent à la suppression et à la recréation du conteneur.
-- Le serveur MLflow sert d'intermédiaire : l'entraînement et l'API envoient et récupèrent les fichiers par son API HTTP. Seul le conteneur MLflow monte le volume.
+Raisons :
 
-**Droits d'accès en CI et en prod : un utilisateur PostgreSQL par base** (en dev, un seul compte administrateur, voir l'ADR-0009).
-
-| Utilisateur | Base | Utilisé par |
-|---|---|---|
-| `commandes_user` | `commandes` | l'API et l'entraînement |
-| `mlflow_user` | `mlflow` | le serveur MLflow uniquement |
-
-Aucun service ne peut modifier la base d'un autre.
+- **L'API ne dépend d'aucun service pour démarrer** : elle lit un fichier sur le volume. Si MLflow est arrêté, elle sert quand même les prédictions.
+- **Une seule machine** (ADR-0003, ADR-0004) : un volume Docker partagé entre `train` et `api` suffit à transmettre le modèle.
+- **L'historique sans infrastructure** : le stockage fichiers de MLflow fournit l'interface, la comparaison des runs et une copie de chaque modèle, sans base ni serveur à maintenir.
+- **Le Model Registry n'apporte rien tant qu'un seul modèle est servi** : ses alias `champion` / `challenger` servaient à désigner deux versions servies en même temps. Le canary de l'ADR-0005 s'en passe, avec deux fichiers (`MODEL_PATH`, `CANARY_MODEL_PATH`).
+- **Revenir sur ce choix reste peu coûteux** : l'API ne connaît que `ModelRepositoryInterface`, et l'entraînement `ExperimentTrackerInterface`. Passer au registre revient à écrire une classe `MlflowModelRepository` et à la choisir dans `core/core.py`.
 
 ### Conséquences
 
-- **Nouveau service** : un conteneur serveur MLflow s'ajoute au docker-compose (ADR-0003), aux côtés de l'API et de la base.
-- **Configuration** : une variable `MLFLOW_TRACKING_URI` s'ajoute à `config.py` et à `.env.example`, et `MLTrainer` comme l'API l'appliquent avant tout appel à MLflow (`mlflow.set_tracking_uri`). En dev, sa valeur par défaut pointe vers le dossier `mlruns/` à la racine du projet, avec un chemin absolu calculé dans `config.py` pour ne pas dépendre du dossier depuis lequel la commande est lancée. En CI et en prod, elle pointe vers le serveur MLflow (`http://mlflow:5000`).
-- **`.gitignore`** : `mlruns/` est exclu du dépôt.
-- **Initialisation de PostgreSQL** : un script exécuté au premier démarrage du conteneur crée les deux bases (`commandes`, `mlflow`) et leurs utilisateurs, chacun propriétaire de sa seule base.
-- **Secrets** : deux couples identifiant / mot de passe à fournir par variables d'environnement (`.env`, non versionné), un par base.
-- **Volume des artéfacts** : lié à la machine hôte. Sa sauvegarde doit être prévue explicitement. En cas de passage à plusieurs machines, l'artifact store pourra migrer vers un stockage compatible S3 (MinIO) en changeant uniquement la configuration du serveur MLflow, sans toucher au code de l'API ni de l'entraînement.
-- **Schéma géré par MLflow** : MLflow crée et fait évoluer ses propres tables (`mlflow db upgrade`). Les contraintes de l'ADR-0001 (`NOT NULL`, `CHECK`, `UNIQUE`…) s'appliquent à nos tables, pas à celles de MLflow.
-- **Chaque entraînement est un run MLflow** (déjà le cas) : paramètres, métriques et modèle y sont enregistrés. Le modèle est en plus inscrit dans le Model Registry sous un nom unique (`registered_model_name`), et la version en production est désignée par un alias.
-- **La version vient du registre, plus de la configuration** : `MODEL_VERSION` disparaît. `PredictionEntity.model_version` et la model card (`ModelEntity`) portent la version du Model Registry. La version stockée avec chaque prédiction (ADR-0001) correspond donc à un modèle réellement retrouvable.
-- **Dépendance au démarrage** : l'API charge le modèle **une seule fois au démarrage** et le garde en mémoire (déjà le cas avec `build_prediction_service`). Elle ne sollicite pas MLflow à chaque prédiction.
-- **Architecture** : l'accès au modèle passe par l'interface `ModelRepositoryInterface` de `domain/interface/`, implémentée par une nouvelle classe `MlflowModelRepository`. Le suivi des entraînements passe déjà par l'interface `ExperimentTrackerInterface`, implémentée par `MlflowTracker`. `FileModelRepository` reste disponible pour les tests et le dev hors ligne. Le choix se fait dans `core/core.py`, selon la configuration. L'API et le métier ne dépendent pas directement de MLflow.
+- **Un seul volume à sauvegarder** : `app_data` contient le modèle servi et tout l'historique MLflow (ADR-0009). Il est lié à la machine hôte.
+- **Stockage fichiers de MLflow** : MLflow 3 le déprécie au profit d'une base. Il doit être autorisé explicitement (`MLFLOW_ALLOW_FILE_STORE=true` dans les composes).
+- **Version du modèle** : `model_version` vient encore de la configuration (`MODEL_VERSION`), pas du fichier. Deux modèles successifs peuvent donc porter la même version. Le lien fiable vers le modèle exact est le `run_id` MLflow, écrit dans les logs de `train` et dans son résultat JSON.
+- **Retour arrière manuel** : le fichier servi est écrasé à chaque promotion, mais chaque run MLflow garde une copie du modèle. Pour revenir en arrière, on recharge celle du run voulu (`mlflow.sklearn.load_model("runs:/<run_id>/model")`), on l'écrit à l'emplacement de `MODEL_PATH`, puis on redémarre l'API. Aucune commande ne l'automatise encore.
+- **Prise en compte d'un nouveau modèle** : l'API charge le modèle une seule fois, au démarrage. Un nouveau modèle est servi après `docker compose restart api`, que le DAG lance en prod (ADR-0011).
+- **Abandonné par rapport à la première version de cet ADR** : la base `mlflow` sur PostgreSQL, les utilisateurs `commandes_user` et `mlflow_user`, le serveur MLflow intermédiaire pour les fichiers des modèles, et les alias `champion` / `challenger`.
 
 ### Points restant ouverts
 
-- **Promotion en production** : automatique si le nouveau modèle fait mieux que l'actuel (champion / challenger), ou validée par un humain ?
-- **Prise en compte d'un nouveau modèle par l'API** : au redémarrage, via une route de rechargement, ou par vérification périodique ?
-- **Reproductibilité des données** : enregistrer dans le run la période ou une empreinte du jeu d'entraînement extrait de la base ?
-- **Interface MLflow** : exposée ou non, et à qui ?
+- **Passage au Model Registry** : quand chaque prédiction devra porter une version réelle, ou quand l'application tournera sur plusieurs machines. Les métadonnées passeront alors sur une base (PostgreSQL, ADR-0006), et les fichiers sur un stockage compatible S3.
+- **Version automatique** : remplacer `MODEL_VERSION` par une valeur liée au modèle (`run_id`, date d'entraînement), sans attendre le registre.
+- **Commande de retour arrière** vers le modèle d'un run donné.
+- **Reproductibilité des données** : enregistrer dans le run la période ou une empreinte du jeu d'entraînement.
 
 ---
 
@@ -163,6 +148,7 @@ Aucun service ne peut modifier la base d'un autre.
 
 **Status :** Accepté
 **Date :** 26/10/2026
+**Révision :** 20/11/2026. Un fichier Compose par environnement (dev, test, prod) au lieu d'un `docker-compose.yml` unique.
 
 ### Contexte
 
@@ -183,7 +169,7 @@ La plateforme doit :
 
 | Option | Avantage | Inconvénient |
 |---|---|---|
-| A. Docker Compose (en local, puis sur un VPS) | Un seul `docker-compose.yml` sert partout. Une seule commande pour tout démarrer. Mêmes images en dev et en prod | Une seule machine : pas de mise à l'échelle automatique, pas de bascule vers une autre machine en cas de panne |
+| A. Docker Compose (en local, puis sur un VPS) | Même outil partout. Une seule commande pour démarrer un environnement. Même image en test et en prod | Une seule machine : pas de mise à l'échelle automatique, pas de bascule vers une autre machine en cas de panne |
 | B. Kubernetes (k3s sur une VM, ou cluster managé) | Standard de l'industrie. Déploiements progressifs (rolling, canary) et redémarrage des services intégrés. `/health` et `/health/ready` sont déjà prêts pour ses sondes | Lourd pour trois services. Manifestes à écrire et à maintenir. Courbe d'apprentissage importante |
 | C. Conteneurs managés (Cloud Run, Azure Container Apps, ECS Fargate) | HTTPS et mise à l'échelle fournis par le service | Dépend d'un fournisseur cloud (écarté par l'ADR-0004). Les volumes de MLflow et PostgreSQL sont à remplacer par des services managés |
 | D. PaaS (Render, Railway, Fly.io) | Déploiement depuis le dépôt en quelques clics | Peu de contrôle. Offres gratuites limitées. PostgreSQL et stockage persistant souvent payants |
@@ -191,29 +177,35 @@ La plateforme doit :
 
 ### Décision
 
-**Option A : Docker et Docker Compose, d'abord en local, puis sur un VPS avec le même `docker-compose.yml`.**
+**Option A : Docker Compose, avec un fichier Compose par environnement (`dev`, `test`, `prod`). La prod tourne d'abord en local, puis sur un VPS, avec le même `docker-compose.prod.yml`.**
 
-- **Mêmes images, même fichier compose** en local et sur le VPS : seule la configuration (`.env`) change d'une machine à l'autre.
+| Environnement | Fichiers | Image de l'application | Données d'entraînement | Services en plus de `api`, `train` et `mlflow` |
+|---|---|---|---|---|
+| Dev (sur son poste, `feat/*`, `dev`) | `docker-compose.dev.yml` + `.env.dev` | Construite, étape `dev` (avec pytest et ruff) | En mémoire par défaut ; MongoDB et ETL simulés avec le profil `etl` | `mongodb`, `etl-simulator` (profil `etl`) |
+| Test (`release/*`, `hotfix/*`) | `docker-compose.test.yml` + `.env.test` | Construite, étape `test`, identique à `prod` | MongoDB de test avec authentification, alimenté par l'ETL simulé | `mongodb`, `etl-simulator` |
+| Prod (`main`) | `docker-compose.prod.yml` + `.env.prod` | Publiée sur GitHub Container Registry par la CD, choisie par `APP_VERSION` | MongoDB de l'ERP, externe, en lecture seule (ADR-0010) | Airflow et sa base, `docker-proxy` (ADR-0011) |
+
+- **Un fichier complet par environnement**, plutôt qu'un fichier unique avec des profils ou des surcharges : les environnements n'ont ni les mêmes services ni la même origine d'image. Chaque fichier se lit seul et montre exactement ce qui tourne.
+- **La même image de la validation à la prod** : l'étape `test` du `Dockerfile` est identique à `prod`. Ce qui a été validé sur une release est ce qui part en production.
+- **Seule la configuration change d'une machine à l'autre** : le fichier `.env.<environnement>`, passé à Compose avec `--env-file` et synchronisé avec les GitHub Environments `development`, `test` et `production` (`scripts/env.ps1`).
 - **Kubernetes et les services managés sont écartés** tant que l'application tient sur une machine et n'a pas besoin de mise à l'échelle.
 
 ### Conséquences
 
-- **À créer** :
-  - un `Dockerfile` pour l'application (Python 3.13, comme `requires-python`), dont la commande par défaut est `serve` et qui peut aussi lancer `train` ;
-  - un `.dockerignore` qui exclut au minimum `.env`, `.venv/`, `notebooks/` et les artéfacts ;
-  - un `docker-compose.yml` avec les services `api`, `mlflow` et `db`. PostgreSQL démarre avec un profil `prod`, puisqu'en dev les commandes sont en mémoire (ADR-0001) ;
-  - un healthcheck Docker qui interroge `/health`.
-- **Un fichier Compose par environnement est le descripteur de déploiement** : `docker-compose.dev.yml`, `docker-compose.test.yml` et `docker-compose.prod.yml`, chacun complet. Tout service de prod, Airflow compris, figure dans `docker-compose.prod.yml`. Les variables viennent du fichier `.env.<environnement>` passé à Compose.
-- **Écoute réseau** : dans le conteneur, l'API écoute sur `0.0.0.0` (la CLI utilise `127.0.0.1` par défaut, ce qui la rendrait injoignable depuis l'hôte). C'est le compose qui limite l'exposition (ADR-0004).
-- **Dépendances** : `requirements.txt` contient l'environnement complet de développement, y compris `pywin32`, qui ne s'installe pas dans une image Linux. Il faut séparer les dépendances d'exécution (`requirements.txt`) et de développement (`requirements-dev.txt`).
-- **Déploiement manuel en attendant la CI/CD** : sur la machine cible, récupérer le code (`git pull`) puis lancer `docker compose up -d --build`. Plus tard, la CI construira les images et les publiera dans un registre (par exemple GitHub Container Registry) : le VPS n'aura plus qu'à les télécharger.
-- **Un reverse proxy (Caddy ou Traefik) s'ajoutera devant l'API sur le VPS**, pour HTTPS (ADR-0008) et pour répartir le trafic entre deux versions (ADR-0005).
-- **Redémarrage automatique** : `restart: unless-stopped` sur chaque service. Le service Docker doit démarrer avec la machine.
+- **`Dockerfile` multi-étapes** (Python 3.13, comme `requires-python`) : `base` installe les dépendances d'exécution et le code ; `dev` y ajoute `requirements-dev.txt` et tout le dépôt ; `test` et `prod` retirent pip et tournent avec `appuser` (UID 1000). La commande par défaut est `serve`, et le service `train` lance `train` à la demande (ADR-0007).
+- **`.dockerignore`** : exclut `.env` et `.env.*`, `.git/`, `.venv/`, `notebooks/`, les modèles, les runs MLflow et l'ETL simulé.
+- **Réglages communs recopiés** dans les trois fichiers (durcissement, volume, healthcheck) : une modification commune se fait dans les trois. C'est le prix de fichiers lisibles seuls.
+- **Écoute réseau** : dans le conteneur, l'API écoute sur `0.0.0.0` (la CLI utilise `127.0.0.1` par défaut, ce qui la rendrait injoignable depuis l'hôte). Les ports ne sont publiés que sur `127.0.0.1` (ADR-0004).
+- **Dépendances séparées** : `requirements.txt` pour l'exécution, `requirements-dev.txt` pour le développement. Les images `test` et `prod` ne contiennent que l'exécution.
+- **Publication par la CD, déploiement manuel** : la fusion d'une release dans `main` construit l'image et la publie sur GitHub Container Registry, sans la déployer. Sur la machine de prod, on met à jour `APP_VERSION` dans `.env.prod`, puis on lance `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d`.
+- **Un reverse proxy (Caddy ou Traefik) s'ajoutera devant l'API sur le VPS**, pour HTTPS (ADR-0008).
+- **Redémarrage automatique** : `restart: unless-stopped` sur chaque service permanent. Le service Docker doit démarrer avec la machine.
 - **Limite assumée : une seule machine est un point de défaillance unique.** Les sauvegardes des volumes deviennent indispensables (ADR-0009). Une fois l'application conteneurisée, un passage ultérieur à Kubernetes ou à un service managé reste possible sans réécrire le code.
 
 ### Points restant ouverts
 
-- **Construction des images** sur le VPS lui-même ou dans la CI avec un registre : à trancher avec la mise en place de la CI/CD.
+- **Déploiement automatique sur le VPS** par la CD : aujourd'hui, elle publie l'image sans la déployer.
+- **Reverse proxy** à ajouter dans `docker-compose.prod.yml` au passage sur le VPS.
 
 ---
 
@@ -276,6 +268,7 @@ L'application ne tourne aujourd'hui que sur le poste du développeur. Il n'exist
 
 **Status :** Accepté
 **Date :** 26/10/2026
+**Révision :** 20/11/2026. Canary à 90/10 réparti dans l'API par `CANARY_PERCENT`, sans reverse proxy ni Model Registry.
 
 ### Contexte
 
@@ -305,48 +298,57 @@ Contraintes :
 
 ### Décision
 
-**Option D : canary release.** Une nouvelle version reçoit d'abord une petite part du trafic. Cette part augmente si les mesures sont bonnes, et retombe à zéro sinon. Le canary s'applique à deux niveaux.
+**Option D : canary release à 90/10. Le nouveau modèle (le canary) reçoit d'abord 10 % des commandes, et le modèle en service (le stable) les 90 % restants. Si le canary passe les critères, il reçoit 100 % des commandes et devient le stable.**
 
-- **Le modèle** (le niveau le plus risqué dans notre cas) :
-  - l'entraînement inscrit la nouvelle version avec l'alias `challenger`, et non directement comme version servie ;
-  - l'API charge les deux versions (`champion` et `challenger`) et envoie au challenger la part des prédictions fixée par la variable `CANARY_PERCENT` (0 = tout le trafic sur le champion) ;
-  - l'affectation dépend de l'identifiant de la commande (par exemple `hash(order_id) % 100 < CANARY_PERCENT`), pour qu'une commande soit toujours prédite par la même version ;
-  - **montée en charge** progressive, par exemple 5 %, puis 25 %, puis 50 % ;
-  - **promotion** : déplacer l'alias `champion` sur le challenger. **Retour arrière** : remettre `CANARY_PERCENT` à 0, sans redéploiement ni réentraînement.
-- **Le code de l'API** :
-  - sur le VPS, le reverse proxy (ADR-0003) répartit le trafic entre l'ancienne et la nouvelle image de l'API, selon un poids qui augmente par étapes ;
-  - **retour arrière** : remettre le poids de la nouvelle image à 0, puis arrêter son conteneur ;
-  - tant qu'il n'y a pas de reverse proxy (en local), le remplacement de l'image se fait en mode recreate.
+Une seule variable, `CANARY_PERCENT` (de 0 à 100, `0` par défaut), fixe la part des commandes envoyée au canary.
+
+| Étape | `CANARY_PERCENT` | Stable (version 1) | Canary (version 2) |
+|---|---|---|---|
+| Nouveau modèle déposé, inactif | `0` | 100 % | 0 % |
+| Essai | `10` | 90 % | 10 % |
+| Généralisation, si l'essai passe les critères | `100` | 0 % | 100 % |
+| Retour arrière, à tout moment | `0` | 100 % | 0 % |
+
+- **Où se fait la répartition** : dans l'API, qui charge les deux modèles. Il n'y a pas besoin de reverse proxy, ce qui convient à une seule machine (ADR-0003).
+- **Affectation d'une commande** : le canary répond si `zlib.crc32(order_id.encode()) % 100 < CANARY_PERCENT`. Une même commande tombe donc toujours du même côté. On utilise `crc32` et non `hash()` de Python, car `hash()` change à chaque démarrage du processus.
+- **Par commande, pas encore par utilisateur** : l'API ne connaît pas ses clients tant que l'authentification n'est pas en place (ADR-0008). Ensuite, la même formule s'appliquera à l'identifiant du client (`sub` du jeton), pour qu'un client voie toujours la même version.
+- **Changer d'étape** : modifier `CANARY_PERCENT` dans `.env.<environnement>` (et dans le GitHub Environment correspondant, ADR-0003), puis recréer l'API (`docker compose -f docker-compose.<environnement>.yml --env-file .env.<environnement> up -d api`). Il ne faut ni nouvelle image ni réentraînement. `docker compose restart api` ne suffit pas, car il garde les anciennes variables.
+- **Avant le canary, la qualité** : un nouveau modèle ne devient canary que s'il a un meilleur score que le stable sur le même jeu de test, tiré des données de l'ERP (ADR-0010, ADR-0011).
+- **Pendant le canary, le comportement réel** : sur ses commandes, le canary ne doit avoir ni plus d'erreurs ni plus de latence que le stable, et sa part de commandes éligibles ne doit pas s'écarter anormalement. **Le passage à 100 % est une décision manuelle**, prise après lecture des mesures.
+- **L'image de l'API**, elle, est remplacée en mode recreate (on change `APP_VERSION`, puis on lance `up -d`). Retour arrière : remettre l'`APP_VERSION` précédente, toujours disponible sur GitHub Container Registry. Un canary entre deux images demandera un reverse proxy, au passage sur le VPS.
 
 Raisons :
 
-- **Aucun orchestrateur nécessaire** : le canary du modèle se règle dans l'API et par configuration, celui de l'image dans le reverse proxy. Cela convient à une seule machine.
-- **Dans un projet de Machine Learning, le risque principal est le modèle** : un modèle moins bon ne fait planter aucun service, il produit simplement de mauvaises prédictions. Le canary le détecte sur une petite part du trafic, avant qu'il ne touche toutes les commandes.
-- **La qualité est jugée avant le canary** : un nouveau modèle ne devient challenger que s'il a un meilleur score que le champion sur le même jeu de test, tiré des données de l'ERP (ADR-0010). Le canary vérifie ensuite, sur le vrai trafic, qu'il ne provoque ni erreurs ni lenteurs. Chaque prédiction est enregistrée avec la version du modèle qui l'a produite (ADR-0001).
-- **Retour arrière immédiat** : une seule valeur de configuration à changer, sans attendre un nouveau déploiement.
+- **Dans un projet de Machine Learning, le risque principal est le modèle** : un modèle moins bon ne fait planter aucun service, il produit simplement de mauvaises prédictions. Le canary limite ce risque à 10 % des commandes, le temps de le vérifier sur le vrai trafic.
+- **Aucune infrastructure à ajouter** : pas de reverse proxy ni de Model Registry. La répartition tient en une ligne de code et une variable, lue par le `Settings` existant.
+- **Retour arrière en une variable**, sans rebuild, sans réentraînement et sans attente de la CI.
 
 ### Conséquences
 
-- **Prérequis** : registre MLflow et version réelle du modèle (ADR-0002), enregistrement des prédictions (ADR-0001), reverse proxy sur le VPS pour le canary de l'image (ADR-0003).
-- **À implémenter** (rien n'est encore en place) :
-  - l'inscription avec l'alias `challenger` dans l'entraînement si le score est meilleur. La comparaison avec le champion est déjà faite par `train` (ADR-0011) ; en attendant le canary, le modèle promu remplace directement le champion ;
-  - la variable `CANARY_PERCENT` dans `config.py` et `.env.example` ;
-  - le chargement des deux versions et la répartition dans l'API (`MLPredict` reçoit les deux modèles, ou un service de routage les enveloppe) ;
-  - un `order_id` toujours présent : il est facultatif dans `OrderEntity`, et l'API devra en générer un s'il est absent ;
-  - une commande CLI de promotion (déplacer l'alias `champion`) ;
-  - un endpoint `GET /model` qui expose la model card, avec la version du challenger, ainsi que cette version dans `/health/ready` ;
-  - la pondération du trafic entre deux images dans la configuration du reverse proxy.
-- **Deux contrôles, à deux moments** :
-  - **avant le canary**, la qualité (f1, précision…) : le nouveau modèle et le champion sont évalués sur le même jeu de test de l'ERP. Sans meilleur score, le nouveau modèle n'est pas inscrit comme challenger et le champion reste en service ;
-  - **pendant le canary**, la latence et le taux d'erreur du challenger, comparés à ceux du champion. Tant que la supervision n'existe pas, la comparaison se fait par requête sur les prédictions enregistrées.
-- **Deux modèles en mémoire** pendant un canary : la consommation mémoire de l'API double pendant cette période.
-- **Volume minimal** : avec peu de trafic, une petite part ne donne pas assez de prédictions pour comparer les versions. La durée de chaque étape doit tenir compte du volume réel.
+- **Deux modèles** : `MODEL_PATH` et `MODEL_VERSION` pour le stable, `CANARY_MODEL_PATH` et `CANARY_MODEL_VERSION` pour le canary. Ces variables, ainsi que `CANARY_PERCENT`, sont ajoutées dans `config.py`, dans `.env.example` et les modèles `.env.*.example`, dans la section `environment` des trois composes et dans les GitHub Environments.
+- **Cycle d'un modèle** :
+  - `train` écrit le modèle promu à `CANARY_MODEL_PATH`, au lieu d'écraser le stable, et l'essai commence à 0 % ;
+  - après la généralisation, le canary est copié à `MODEL_PATH`, et `CANARY_PERCENT` revient à 0. Il devient le stable du prochain essai ;
+  - le DAG de l'ADR-0011 sera adapté à ce fonctionnement.
+- **Chaque prédiction indique le modèle qui a répondu** : la réponse porte sa version (`model_version`), et un log par requête donne l'`order_id`, la version, la latence et l'erreur éventuelle. Comme l'API n'enregistre pas ses prédictions (ADR-0001), ce sont ces logs qui servent à comparer les deux modèles.
+- **`order_id` toujours présent** : il est facultatif dans `OrderEntity`, donc l'API en génère un (`uuid4`) s'il est absent, et le renvoie dans la réponse.
+- **La répartition est assemblée par la racine de composition** (`core/core.py`), qui charge les deux modèles. Le métier ne lit jamais la configuration lui-même.
+- **Tests** : pytest couvre 0 %, 100 %, et vérifie que la répartition à 10 % est stable pour un même `order_id`.
+- **Deux modèles en mémoire** pendant un essai : la consommation mémoire de l'API double pendant cette période.
+- **État de l'implémentation** :
+  - **fait** : la répartition dans l'API (`CanaryPredict`, assemblé par `build_prediction_service`), les variables `CANARY_*` et le log par prédiction. Si `CANARY_PERCENT` > 0 mais qu'il n'y a pas de modèle canary, tout va au stable ;
+  - **reste à faire** : `train` et le DAG écrivent encore le modèle promu à `MODEL_PATH` (ADR-0011). En attendant, on dépose un canary en lançant `train` avec `MODEL_PATH` pointant vers `CANARY_MODEL_PATH`, sans comparaison avec le stable.
+- **Limites assumées** :
+  - avec peu de trafic, 10 % donnent peu de commandes, et l'essai doit durer assez longtemps pour être significatif ;
+  - chaque changement de `CANARY_PERCENT` recrée l'API, ce qui la coupe quelques secondes.
 
 ### Points restant ouverts
 
-- **Paliers** de montée en charge et **durée** de chaque palier.
-- **Seuils de promotion** : écart de score minimal pour qu'un nouveau modèle devienne challenger, puis écart de latence et de taux d'erreur acceptable entre challenger et champion.
-- **Promotion manuelle ou automatique.**
+- **Seuils chiffrés** des critères : écart de taux d'erreur, de latence et de part d'éligibles acceptable entre le canary et le stable.
+- **Durée minimale de l'essai**, ou nombre minimal de commandes servies par le canary.
+- **Palier intermédiaire** (par exemple 50 %) si un passage direct de 10 % à 100 % paraît trop brutal.
+- **Canary de l'image de l'API** par un reverse proxy, au passage sur le VPS.
+- **Affectation par client** une fois l'authentification en place (ADR-0008).
 
 ---
 
@@ -361,7 +363,7 @@ L'ADR-0001 retient PostgreSQL pour les commandes, mais ne le compare qu'à SQLit
 
 - les **commandes reçues par l'API** et leurs **prédictions**, avec la version du modèle qui les a produites (ADR-0001) ;
 - le **label réel**, ajouté après coup à une commande déjà enregistrée (ADR-0001) ;
-- le **backend store de MLflow** : runs, métriques, Model Registry et alias `champion` / `challenger` (ADR-0002, ADR-0005) ;
+- le **backend store de MLflow** : runs, métriques et, à terme, Model Registry (ADR-0002) ;
 - la **base de métadonnées d'Airflow** (ADR-0011).
 
 Il ne concerne pas le MongoDB de l'ERP (ADR-0010) : cette base appartient à l'ERP, nous la lisons en lecture seule et nous ne l'avons pas choisie.
@@ -370,7 +372,7 @@ Ce que ces données ont en commun :
 
 - **un schéma fixe et connu** : les champs de `OrderEntity` et de `PredictionEntity`, déjà validés par l'API (ADR-0008) ;
 - **des relations** : une prédiction appartient à une commande, un label complète une commande, une version de modèle produit des prédictions ;
-- **des requêtes d'analyse** : comparer champion et challenger sur le même trafic (ADR-0005), extraire les commandes labellisées d'une période pour l'entraînement ;
+- **des requêtes d'analyse** : comparer deux versions du modèle sur les mêmes commandes, extraire les commandes labellisées d'une période pour l'entraînement ;
 - **un petit volume** : quelques milliers de commandes, sur une seule machine (ADR-0003, ADR-0004).
 
 ### Options considérées
@@ -389,7 +391,7 @@ Ce que ces données ont en commun :
 
 Raisons de l'écart de MongoDB et du NoSQL :
 
-- **Nos données sont relationnelles.** Commandes, prédictions, labels et versions de modèle se joignent entre eux. Le modèle document de MongoDB n'apporte rien sur des données à schéma fixe, et rend plus difficiles les requêtes dont le canary a besoin (comparer deux versions sur les mêmes commandes).
+- **Nos données sont relationnelles.** Commandes, prédictions, labels et versions de modèle se joignent entre eux. Le modèle document de MongoDB n'apporte rien sur des données à schéma fixe, et rend plus difficiles les requêtes d'analyse (comparer deux versions du modèle sur les mêmes commandes).
 - **Le schéma doit être garanti par la base.** Sans schéma imposé, un document incomplet ou mal typé entre sans erreur et ne se voit qu'à l'entraînement. L'ADR-0010 le montre : pour lire le MongoDB de l'ERP, il faut revalider chaque document à la lecture. Nous ne voulons pas reproduire ce coût sur nos propres données.
 - **Un seul moteur à exploiter.** MLflow et Airflow exigent une base SQL. Choisir MongoDB pour les commandes ajouterait un deuxième moteur, avec ses sauvegardes, ses comptes et ses mises à jour, au lieu d'un seul serveur PostgreSQL qui héberge les trois bases.
 - **Le besoin de mise à l'échelle horizontale n'existe pas.** C'est l'argument principal du NoSQL (Cassandra, MongoDB shardé) ; notre volume tient largement sur une machine.
@@ -724,7 +726,7 @@ Ce que la source doit permettre :
 1. l'ETL de l'ERP ajoute les nouvelles commandes labellisées dans MongoDB ;
 2. `train` lit toutes les commandes labellisées et entraîne un nouveau modèle ;
 3. le nouveau modèle et le modèle en service (`champion`) sont évalués **sur le même jeu de test** : les commandes les plus récentes, qui n'ont servi à entraîner aucun des deux ;
-4. si le nouveau modèle a un meilleur score, il devient le challenger puis le champion (ADR-0005). Sinon, le modèle en service est conservé, et le prochain entraînement se fera avec les nouvelles données de l'ETL.
+4. si le nouveau modèle a un meilleur score, il remplace le modèle en service (ADR-0011). Sinon, le modèle en service est conservé, et le prochain entraînement se fera avec les nouvelles données de l'ETL.
 
 Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : les nouvelles données peuvent simplement être plus faciles ou plus difficiles à prédire. D'où l'étape 3.
 
@@ -826,11 +828,11 @@ Raisons :
 - **Le DAG est actif dès son chargement** (`DAGS_ARE_PAUSED_AT_CREATION=false`). Au premier démarrage, Airflow lance aussitôt le run de la dernière nuit passée.
 - **Comportement de `train` en dev** : il se compare aussi au modèle existant. Avec les mêmes données synthétiques, le nouveau modèle est identique, donc pas meilleur : le modèle existant est conservé.
 - **Coût** : six conteneurs de plus sur la machine de prod (Airflow, sa base et le proxy Docker), qui doit avoir la mémoire nécessaire.
-- **Remplacement direct, pas de canary** : le modèle promu est servi à tout le trafic après le redémarrage de l'API. Le canary de l'ADR-0005 (alias `challenger`, `CANARY_PERCENT`) reste à implémenter. Le DAG inscrira alors le nouveau modèle comme challenger au lieu de redémarrer l'API.
+- **Remplacement direct, pour l'instant** : le modèle promu est servi à tout le trafic après le redémarrage de l'API. Le canary de l'ADR-0005 reste à implémenter : le DAG écrira alors le modèle promu à `CANARY_MODEL_PATH`, et il sera d'abord servi à 10 % des commandes.
 
 ### Points restant ouverts
 
 - **Seuil** `RETRAIN_MIN_NEW_ORDERS` à ajuster au volume réel des labels de l'ETL.
 - **Alertes** en cas d'échec du DAG (e-mail, Slack).
-- **Coupure de l'API** de quelques secondes à chaque promotion, le temps du redémarrage. Le canary (ADR-0005) ou un rechargement à chaud la supprimeraient.
+- **Coupure de l'API** de quelques secondes à chaque promotion, le temps du redémarrage. Un rechargement à chaud du modèle la supprimerait.
 - **Base de métadonnées** : PostgreSQL dédié à Airflow. Il pourra être partagé avec MLflow et les commandes (ADR-0001, ADR-0002) quand ce serveur PostgreSQL existera.
