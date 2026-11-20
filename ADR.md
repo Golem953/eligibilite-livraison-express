@@ -4,72 +4,63 @@
 
 **Status :** Accepté
 **Date :** 26/10/2026
+**Révision :** 20/11/2026. Les commandes restent dans le MongoDB des analystes, alimenté par l'ERP : l'application n'a pas de base propre et n'enregistre pas ses prédictions. La première version (PostgreSQL en CI et en prod) est abandonnée.
 
 ### Contexte
 
-L'API expose `POST /predict` : elle reçoit une commande, renvoie une prédiction, et **n'enregistre rien**. Ni la commande ni la prédiction ne sont conservées.
+L'API expose `POST /predict` : elle reçoit une commande, renvoie une prédiction, et **n'enregistre rien**.
 
-Le seul stockage de commandes est `InMemoryOrderRepository`, un dictionnaire Python rempli au démarrage de l'entraînement avec les données du générateur synthétique. La commande `train` s'entraîne sur ces données générées. Elles disparaissent à l'arrêt du processus et ne sont pas partagées entre l'API et `train`, qui tournent dans deux processus distincts.
+Au départ, le seul stockage de commandes est `InMemoryOrderRepository`, un dictionnaire Python rempli au démarrage de l'entraînement par le générateur synthétique. L'interface `OrderRepositoryInterface` (`domain/interface/`) déclare `save`, `get` et `get_training_data()`, et l'implémentation est choisie dans la racine de composition `core/core.py`.
 
-L'interface `OrderRepositoryInterface` (`domain/interface/`) déclare les opérations de base `save` et `get`, et `get_training_data()` pour l'entraînement. L'implémentation est choisie dans la racine de composition `core/core.py`.
+Les commandes réelles existent déjà ailleurs : l'ERP les envoie, avec leur label, dans le **MongoDB des analystes**. Ce MongoDB n'est pas une base de l'ERP : il en reçoit les données **dans un seul sens** (ERP → MongoDB), sans aucun lien retour (ADR-0010).
 
-Ce que le stockage doit permettre :
+La question est donc : l'application a-t-elle besoin de **sa propre base** de commandes ? Deux besoins sont possibles :
 
-- **Écrire une ligne à chaque appel de l'API.** Les écritures sont fréquentes et unitaires. Elles peuvent être concurrentes si l'API tourne avec plusieurs workers.
-- **Conserver la prédiction et la version du modèle** qui l'a produite (`PredictionEntity.model_version`), pour l'audit et le monitoring.
-- **Retrouver une prédiction** à partir de la commande, pour l'audit et pour comparer deux versions du modèle sur les mêmes commandes : il faut pouvoir **joindre** commandes et prédictions.
-
-Le réentraînement ne passe pas par cette base : il utilise uniquement les commandes labellisées de l'ERP, mises à jour par un ETL (ADR-0010). Les commandes reçues par l'API n'ont donc pas besoin d'être complétées après coup avec leur résultat réel.
+- **entraîner** le modèle sur des commandes labellisées ;
+- **garder une trace des prédictions servies** (commande, prédiction, version du modèle), pour l'audit ou pour mesurer la qualité du modèle sur le trafic réel.
 
 ### Options considérées
 
 | Option | Avantage | Inconvénient |
 |---|---|---|
-| A. SQLite | Un seul fichier, SQL disponible, aucun service | Un seul écrivain à la fois. Inutilisable si l'API et l'entraînement tournent sur deux machines |
-| B. PostgreSQL (conteneur docker-compose) | Écritures concurrentes, mises à jour et jointures faciles, standard en production, type `JSONB`. Bon support comme backend MLflow (base mutualisable avec l'ADR-0002) | Service supplémentaire à maintenir (configuration, sauvegardes, migrations) |
-| C. MariaDB (conteneur docker-compose) | Écritures concurrentes, mises à jour et jointures faciles, prise en main simple si l'équipe connaît MySQL | Service supplémentaire à maintenir. Support JSON moins riche que PostgreSQL. Moins courant comme backend MLflow |
-| D. En mémoire en dev, PostgreSQL en CI et en prod | Dev instantané : aucun service, aucun fichier, aucun Docker. `InMemoryOrderRepository` existe déjà. Robustesse de PostgreSQL là où ça compte | En dev, les données disparaissent à chaque redémarrage et ne sont pas partagées entre processus. Aucune contrainte de base en dev : certaines erreurs de données n'apparaissent qu'en CI |
+| A. Aucune base propre : l'entraînement lit le MongoDB des analystes, l'API n'enregistre rien | Rien à installer ni à maintenir. Une seule source de vérité, déjà alimentée par l'ERP | Aucune trace des prédictions servies : pas d'audit, pas de mesure de la qualité sur le trafic réel |
+| B. MongoDB des analystes, où l'API écrit aussi ses prédictions | Pas de nouveau serveur | Mélange les données de l'ERP et celles de l'application dans une base faite pour l'analyse |
+| C. PostgreSQL propre à l'application (en mémoire en dev) | Trace complète des prédictions, schéma imposé, jointures | Un serveur de plus à maintenir. Les commandes existent déjà dans MongoDB : on les aurait en double |
+| D. SQLite | Un seul fichier, aucun service | Un seul écrivain à la fois, une seule machine |
 
 ### Décision
 
-**Option D : stockage en mémoire en développement, PostgreSQL en test (CI) et en production.**
+**Option A : l'application n'a pas de base propre. Les commandes sont lues dans le MongoDB des analystes, et l'API n'enregistre ni les commandes ni les prédictions.**
 
-- **En dev, en mémoire** (`InMemoryOrderRepository`) : rien à installer, démarrage instantané. L'objectif est l'environnement de développement le plus rapide possible pour les futurs collaborateurs.
-- **En CI et en prod, PostgreSQL** : persistance, écritures concurrentes, données partagées entre les workers et les versions de l'API, typage strict. Le choix du moteur face à MongoDB et aux bases NoSQL est justifié dans l'ADR-0006.
-- **En contrepartie de l'absence de contraintes en mémoire**, la CI exécute les mêmes tests sur les deux implémentations, et les données sont validées avant d'atteindre le repository.
-- **Le métier ne dépend pas du moteur** : l'API, l'entraînement et le domaine ne connaissent que l'abstraction `OrderRepositoryInterface`. Seule l'implémentation PostgreSQL contient du SQL.
+Raisons :
 
-#### Durée de vie des données en mémoire
+- **Les données existent déjà et sont alimentées en continu** : l'ERP écrit dans le MongoDB des analystes. Créer une autre base reviendrait à stocker les mêmes commandes deux fois.
+- **Le seul besoin retenu est l'entraînement** : on réentraîne avec les nouvelles données, on compare le nouveau modèle (challenger) au modèle en service (champion) sur les mêmes commandes récentes, et il ne devient champion que s'il fait mieux (ADR-0010, ADR-0011). Cette comparaison n'a besoin d'aucune trace des prédictions servies.
+- **Aucun risque pour l'ERP** : le lien va dans un seul sens, de l'ERP vers MongoDB. Rien de ce que fait l'entraînement ne remonte vers l'ERP.
+- **L'accès est maîtrisé** : l'équipe obtient le compte administrateur de ce MongoDB par l'alternant qui le maintient, ou le reprend lors du transfert de compte à son départ. Elle crée ensuite un compte en lecture seule pour l'entraînement (ADR-0009).
 
-Les commandes et les prédictions sont stockées dans un dictionnaire Python, à l'intérieur du **processus** de l'API, pas dans le conteneur ni sur le disque :
+**Par environnement** (`TRAINING_SOURCE_URL`, ADR-0010) :
 
-| Situation | Données conservées ? |
+| Environnement | Source des commandes |
 |---|---|
-| L'API tourne et reçoit des requêtes | Oui |
-| Redémarrage du processus : arrêt ou redémarrage du conteneur, redéploiement, plantage, rechargement automatique (`--reload`) | **Non**, tout est perdu |
-| Lecture depuis un autre processus (commande `train`, deuxième API) | **Non**, chaque processus a son propre dictionnaire |
-| API lancée avec plusieurs workers uvicorn | **Partiellement** : chaque worker a son propre dictionnaire, donc les commandes sont réparties entre eux |
-
-C'est acceptable en dev, car les données sont synthétiques et regénérées au démarrage (`generated=True`). C'est inacceptable en prod, d'où PostgreSQL.
+| Dev, tests unitaires | `memory://` : générateur synthétique (`InMemoryOrderRepository`) |
+| Dev, cycle complet | MongoDB de dev, alimenté par l'ETL simulé (profil `etl`) |
+| Test | MongoDB de test, avec authentification, alimenté par l'ETL simulé |
+| Prod | MongoDB des analystes, compte en lecture seule |
 
 ### Conséquences
 
-- **Choix de l'implémentation par configuration** : à l'arrivée de PostgreSQL, une variable `ORDER_REPOSITORY_URL` (`memory://` ou `postgresql://…`) s'ajoutera à `Settings`, et la racine de composition `core/core.py` choisira l'implémentation selon sa valeur. Ce choix ne se fait nulle part ailleurs.
-- **Contrat du repository** : l'interface `OrderRepositoryInterface` déclare `save`, `get` et `get_training_data()`. L'enregistrement des prédictions s'y ajoutera quand l'API l'utilisera (YAGNI).
-- **Identifiant obligatoire à l'enregistrement** : `order_id` est facultatif dans `OrderEntity`, mais `save` refuse une commande sans identifiant (`ValueError`), dans toutes les implémentations. L'API doit donc générer un identifiant avant d'enregistrer.
-- **Enregistrement des prédictions testé uniquement avec PostgreSQL** : en dev, les prédictions ne sont pas conservées. Leur enregistrement ne se vérifie qu'avec PostgreSQL, en CI ou avec `docker compose` (ADR-0003).
-- **Un seul worker en dev** : l'API en mémoire tourne avec un seul worker uvicorn (déjà le cas avec `serve`), pour que toutes les requêtes voient les mêmes données.
-- **Contrôles portés par le code et le schéma, pas par le stockage en mémoire** : le dictionnaire accepte n'importe quelle valeur. Les données sont donc validées par l'API (ADR-0008) avant l'écriture, et le schéma PostgreSQL déclare explicitement ses contraintes (`NOT NULL`, `CHECK` sur les bornes et les valeurs énumérées, `UNIQUE` sur `order_id`, clés étrangères entre commandes et prédictions).
-- **Tests de contrat en CI** : une même suite de tests vérifie les deux implémentations (`InMemoryOrderRepository` et l'implémentation PostgreSQL, via un service container GitHub Actions). Elle couvre l'absence de doublon sur `order_id`, `get` qui renvoie `None` pour un identifiant inconnu, et le rejet des données invalides. Un test qui passe sur l'une et échoue sur l'autre bloque le pipeline.
-- **Outillage SQL et migrations** : SQLAlchemy et Alembic (déjà dans `requirements.txt`) pour l'implémentation PostgreSQL.
-- **Déploiement** : un serveur PostgreSQL fonctionne, que l'API et l'entraînement tournent sur une ou deux machines.
-- **Outillage** : DBeaver pour consulter la base PostgreSQL.
-- **Architecture** : l'accès aux commandes passe par l'interface `OrderRepositoryInterface` de `domain/interface/`. L'implémentation PostgreSQL va dans `infrastructure/repository/` (par exemple `sql_order_repository.py`). Passer de la mémoire à PostgreSQL revient à changer la configuration, sans toucher au métier ni à l'API.
+- **L'API reste sans état** : une prédiction n'existe que dans la réponse et dans les logs. On ne peut ni auditer une prédiction passée, ni mesurer la qualité du modèle sur le trafic réel.
+- **La qualité d'un modèle se juge avant sa mise en service**, sur le jeu de test tiré de MongoDB (ADR-0011). Pendant un canary (ADR-0005), la comparaison du stable et du canary se fait sur les logs de l'API.
+- **Deux implémentations de `OrderRepositoryInterface`** : `InMemoryOrderRepository` (dev, tests) et `MongoOrderRepository` (test, prod), choisies par `TRAINING_SOURCE_URL` dans `core/core.py`. Le métier ne dépend pas du moteur.
+- **Validation à la lecture** : MongoDB n'impose aucun schéma. `MongoOrderRepository` convertit chaque document en `OrderEntity` et écarte, en le comptant, tout document incomplet ou mal typé (ADR-0010).
+- **Dépendance au MongoDB des analystes** : s'il est indisponible, l'entraînement échoue et le modèle en service reste en place. L'API, elle, n'en dépend pas.
+- **Aucun serveur de base de données pour l'application.** Le seul PostgreSQL du système est la base interne d'Airflow (ADR-0011), qui ne contient aucune donnée de l'application.
 
-### Points restant ouverts (sans impact sur le choix du moteur)
+### Points restant ouverts
 
-- Quel **volume** de commandes viser (par jour, au total) ?
-- Le **générateur de données synthétiques** remplit aujourd'hui le dépôt en mémoire au démarrage (`generated=True`). Pour tester avec MongoDB, c'est l'ETL simulé (`etl_simulator/`) qui alimente la base de test, à la place de l'ETL de l'ERP (ADR-0010).
+- **Tracer les prédictions** si un besoin d'audit ou de suivi en production apparaît : une collection dédiée, dans un MongoDB propre à l'application plutôt que dans celui des analystes.
+- **Mesurer la performance réelle** en reliant une prédiction au label arrivé plus tard dans MongoDB, par `order_id` : cela suppose que le client envoie à l'API l'identifiant de l'ERP.
 
 ---
 
@@ -137,7 +128,7 @@ Raisons :
 
 ### Points restant ouverts
 
-- **Passage au Model Registry** : quand chaque prédiction devra porter une version réelle, ou quand l'application tournera sur plusieurs machines. Les métadonnées passeront alors sur une base (PostgreSQL, ADR-0006), et les fichiers sur un stockage compatible S3.
+- **Passage au Model Registry** : quand chaque prédiction devra porter une version réelle, ou quand l'application tournera sur plusieurs machines. Les métadonnées passeront alors sur une base SQL (MLflow ne prend pas MongoDB, ADR-0006), et les fichiers sur un stockage compatible S3.
 - **Version automatique** : remplacer `MODEL_VERSION` par une valeur liée au modèle (`run_id`, date d'entraînement), sans attendre le registre.
 - **Commande de retour arrière** vers le modèle d'un run donné.
 - **Reproductibilité des données** : enregistrer dans le run la période ou une empreinte du jeu d'entraînement.
@@ -229,7 +220,7 @@ L'application ne tourne aujourd'hui que sur le poste du développeur. Il n'exist
 
 | Option | Avantage | Inconvénient |
 |---|---|---|
-| A. Local (poste du développeur, pile `APP_ENV=prod` lancée avec Docker Compose) | Gratuit et immédiat. Aucune exposition sur Internet | Pas joignable de l'extérieur. S'arrête avec le poste. Pas une vraie prod |
+| A. Local (poste du développeur, pile `docker-compose.prod.yml` lancée avec Docker Compose) | Gratuit et immédiat. Aucune exposition sur Internet | Pas joignable de l'extérieur. S'arrête avec le poste. Pas une vraie prod |
 | B. VPS (serveur virtuel loué : OVHcloud, Scaleway, Hetzner…) | Quelques euros par mois. Accès complet à la machine. Même Docker qu'en local. Hébergeur européen possible | Système, sécurité, mises à jour et sauvegardes à notre charge |
 | C. On-premise (serveur de l'école ou de l'entreprise) | Pas de location. Données sur place | Dépend de la disponibilité et des règles du propriétaire du serveur. Accès depuis l'extérieur à négocier |
 | D. Cloud public avec services managés (Azure, AWS, GCP) | Base, stockage, secrets et HTTPS gérés par le fournisseur. Mise à l'échelle | Coût variable. Configuration propre à chaque fournisseur et dépendance envers lui. Surdimensionné pour ce projet |
@@ -238,7 +229,7 @@ L'application ne tourne aujourd'hui que sur le poste du développeur. Il n'exist
 
 **Option A pour l'instant : la production tourne en local. Passage possible sur un VPS (option B) plus tard. Pas de cloud public avec services managés.**
 
-- **En local**, la « prod » est la pile `APP_ENV=prod` (avec PostgreSQL) lancée sur un poste. C'est suffisant pour les démonstrations.
+- **En local**, la « prod » est la pile `docker-compose.prod.yml` lancée sur un poste. C'est suffisant pour les démonstrations.
 - **Sur un VPS ensuite**, quand l'API devra être joignable depuis Internet, sans changer d'outil (même Docker Compose, ADR-0003).
 
 **Services cloud : aucun n'est retenu.** Si un passage au cloud est décidé plus tard, voici la correspondance des composants :
@@ -246,13 +237,13 @@ L'application ne tourne aujourd'hui que sur le poste du développeur. Il n'exist
 | Composant | Aujourd'hui | Azure | AWS | GCP |
 |---|---|---|---|---|
 | API | conteneur `api` | Container Apps | ECS Fargate | Cloud Run |
-| Base des commandes | conteneur `db` + volume | Azure Database for PostgreSQL | RDS PostgreSQL | Cloud SQL |
-| Artéfacts MLflow | volume `mlflow_data` | Blob Storage | S3 | Cloud Storage |
+| Commandes (MongoDB des analystes) | service externe | Azure Cosmos DB for MongoDB | Amazon DocumentDB | MongoDB Atlas |
+| Modèle et runs MLflow | volume `app_data` | Blob Storage | S3 | Cloud Storage |
 | Secrets | fichier `.env` | Key Vault | Secrets Manager | Secret Manager |
 
 ### Conséquences
 
-- **En local, rien ne doit être joignable depuis le réseau.** Les ports publiés par le compose (API 8000, MLflow 5000, PostgreSQL) doivent n'écouter que sur la machine (`127.0.0.1:8000:8000`). Sinon, un portable connecté à un réseau Wi-Fi partagé les exposerait (ADR-0009). Hors Docker, `serve` écoute déjà sur `127.0.0.1` par défaut.
+- **En local, rien ne doit être joignable depuis le réseau.** Les ports publiés par le compose (API 8000, MLflow 5000, Airflow 8080) doivent n'écouter que sur la machine (`127.0.0.1:8000:8000`). Sinon, un portable connecté à un réseau Wi-Fi partagé les exposerait (ADR-0009). Hors Docker, `serve` écoute déjà sur `127.0.0.1` par défaut.
 - **Sur le VPS** : choisir un hébergeur européen (données hébergées dans l'Union européenne), durcir le serveur (ADR-0009) et réserver un nom de domaine pour le certificat HTTPS (ADR-0008).
 - **Dimensionnement indicatif du VPS**, à vérifier une fois l'image construite : 2 vCPU et 4 Go de mémoire (l'entraînement scikit-learn charge les données en mémoire, et les dépendances incluent MLflow, pandas et pyarrow).
 - **Pas de garantie de disponibilité** : acceptable à ce stade du projet.
@@ -356,61 +347,55 @@ Raisons :
 
 **Status :** Accepté
 **Date :** 17/11/2026
+**Révision :** 20/11/2026. MongoDB retenu : celui des analystes, déjà en place. PostgreSQL est abandonné pour les données de l'application.
 
 ### Contexte
 
-L'ADR-0001 retient PostgreSQL pour les commandes, mais ne le compare qu'à SQLite et à MariaDB : la famille NoSQL (MongoDB en tête) n'y a jamais été évaluée. Cet ADR tranche le choix du **moteur** pour les données que **notre application possède et écrit** :
+L'ADR-0001 conclut que l'application n'a pas de base propre : ses seules données sont les commandes labellisées qui servent à l'entraînement. Cet ADR tranche le moteur de ces données : s'appuyer sur le MongoDB des analystes, déjà en place, ou monter une base relationnelle à côté.
 
-- les **commandes reçues par l'API** et leurs **prédictions**, avec la version du modèle qui les a produites (ADR-0001) ;
-- le **label réel**, ajouté après coup à une commande déjà enregistrée (ADR-0001) ;
-- le **backend store de MLflow** : runs, métriques et, à terme, Model Registry (ADR-0002) ;
-- la **base de métadonnées d'Airflow** (ADR-0011).
+Ce qu'on sait :
 
-Il ne concerne pas le MongoDB de l'ERP (ADR-0010) : cette base appartient à l'ERP, nous la lisons en lecture seule et nous ne l'avons pas choisie.
+- **le MongoDB des analystes existe et est alimenté** : l'ERP y envoie ses commandes et leur label, dans un seul sens (ADR-0010) ;
+- **l'équipe peut en devenir administratrice** : l'alternant qui le maintient lui donne l'accès, ou lui transfère son compte à son départ ;
+- **le besoin est une lecture simple** : toutes les commandes labellisées, triées par date pour le jeu de test (ADR-0010). Aucune jointure, aucune mise à jour, aucune écriture par l'application ;
+- **le volume est petit** : quelques milliers de commandes, sur une machine (ADR-0003, ADR-0004).
 
-Ce que ces données ont en commun :
-
-- **un schéma fixe et connu** : les champs de `OrderEntity` et de `PredictionEntity`, déjà validés par l'API (ADR-0008) ;
-- **des relations** : une prédiction appartient à une commande, un label complète une commande, une version de modèle produit des prédictions ;
-- **des requêtes d'analyse** : comparer deux versions du modèle sur les mêmes commandes, extraire les commandes labellisées d'une période pour l'entraînement ;
-- **un petit volume** : quelques milliers de commandes, sur une seule machine (ADR-0003, ADR-0004).
+Cet ADR ne concerne pas les bases internes des outils : Airflow impose une base SQL pour ses métadonnées (ADR-0011), et MLflow stocke ses runs en fichiers (ADR-0002).
 
 ### Options considérées
 
 | Option | Avantage | Inconvénient |
 |---|---|---|
-| A. PostgreSQL (relationnel) | Schéma et contraintes imposés par la base (`NOT NULL`, `CHECK`, `UNIQUE`, clés étrangères). Jointures, agrégations et transactions ACID. Backend supporté par MLflow **et** Airflow : un seul moteur pour tout. `JSONB` si un champ semi-structuré apparaît. Standard, outillé (SQLAlchemy, Alembic, DBeaver) | Schéma à faire évoluer par migrations. Service à maintenir |
-| B. MySQL / MariaDB (relationnel) | Mêmes atouts relationnels. Supporté par MLflow et Airflow | Support JSON et contraintes `CHECK` moins riches. Aucun avantage sur PostgreSQL pour nos besoins |
-| C. MongoDB (NoSQL orienté documents) | Aucun schéma à déclarer, documents JSON proches des objets Python. Déjà présent dans le SI (base de l'ERP) | Le schéma n'est garanti par rien : toute la validation repose sur le code. Pas de clés étrangères ; jointures (`$lookup`) et agrégations plus lourdes à écrire. **Non supporté comme backend par MLflow ni par Airflow** : il faudrait de toute façon un moteur SQL à côté |
-| D. Autre NoSQL : Redis (clé-valeur), Cassandra (colonnes larges), Elasticsearch (recherche) | Très performants sur leur cas d'usage : cache, écritures massives distribuées, recherche plein texte | Aucun de ces cas d'usage n'est le nôtre. Pas de requêtes relationnelles. Pas de backend MLflow ni Airflow |
-| E. SQLite | Un fichier, aucun service | Un seul écrivain à la fois, une seule machine (déjà écarté par l'ADR-0001) |
+| A. PostgreSQL (relationnel), propre à l'application | Schéma et contraintes imposés par la base. Jointures et transactions ACID | Un serveur de plus à installer, sécuriser et sauvegarder. Les commandes devraient être copiées depuis MongoDB : deux bases pour les mêmes données |
+| B. MySQL / MariaDB (relationnel) | Mêmes atouts relationnels | Mêmes inconvénients que PostgreSQL |
+| C. MongoDB des analystes (orienté documents), déjà en place | Existe déjà et reçoit les données de l'ERP en continu. Rien à installer. Accès administrateur obtenu par l'équipe. Documents proches des objets Python | Aucun schéma imposé : la validation se fait à la lecture. Pas de jointures simples (inutiles aujourd'hui) |
+| D. Autre NoSQL : Redis, Cassandra, Elasticsearch | Très performants sur leur cas d'usage (cache, écritures massives, recherche) | Aucun de ces cas d'usage n'est le nôtre, et il faudrait aussi copier les données |
+| E. SQLite | Un fichier, aucun service | Copie des données, un seul écrivain, une seule machine |
 
 ### Décision
 
-**Option A : PostgreSQL pour toutes les données de l'application. MongoDB et les bases NoSQL sont écartés.**
+**Option C : MongoDB, celui des analystes, déjà en place. Pas de base PostgreSQL pour les données de l'application.**
 
-Raisons de l'écart de MongoDB et du NoSQL :
+Raisons :
 
-- **Nos données sont relationnelles.** Commandes, prédictions, labels et versions de modèle se joignent entre eux. Le modèle document de MongoDB n'apporte rien sur des données à schéma fixe, et rend plus difficiles les requêtes d'analyse (comparer deux versions du modèle sur les mêmes commandes).
-- **Le schéma doit être garanti par la base.** Sans schéma imposé, un document incomplet ou mal typé entre sans erreur et ne se voit qu'à l'entraînement. L'ADR-0010 le montre : pour lire le MongoDB de l'ERP, il faut revalider chaque document à la lecture. Nous ne voulons pas reproduire ce coût sur nos propres données.
-- **Un seul moteur à exploiter.** MLflow et Airflow exigent une base SQL. Choisir MongoDB pour les commandes ajouterait un deuxième moteur, avec ses sauvegardes, ses comptes et ses mises à jour, au lieu d'un seul serveur PostgreSQL qui héberge les trois bases.
-- **Le besoin de mise à l'échelle horizontale n'existe pas.** C'est l'argument principal du NoSQL (Cassandra, MongoDB shardé) ; notre volume tient largement sur une machine.
-- **Le label réel est une mise à jour transactionnelle** d'une commande existante : PostgreSQL garantit qu'elle est complète ou absente, sans état intermédiaire.
-
-**Le MongoDB de l'ERP n'est pas remis en cause** : c'est une source externe imposée, que l'entraînement lit en lecture seule (ADR-0010). Notre choix ne porte que sur ce que nous écrivons.
+- **La base existe et le système est en place** : l'ERP l'alimente, l'ETL tourne, et `MongoOrderRepository` la lit déjà (ADR-0010). Une base relationnelle demanderait de copier ces commandes et de maintenir cette copie.
+- **Nos besoins n'utilisent pas les atouts du relationnel** : l'application ne fait que lire des commandes labellisées. Sans prédictions stockées (ADR-0001), il n'y a ni jointure ni mise à jour transactionnelle à garantir.
+- **Isolée de l'ERP** : le lien va de l'ERP vers MongoDB, jamais dans l'autre sens. Lire cette base ne peut rien casser côté ERP.
+- **L'absence de schéma est compensée à la lecture** : chaque document est validé et converti en `OrderEntity`. Un document incomplet est écarté et compté, jamais utilisé en silence (ADR-0010).
+- **Un serveur de moins à exploiter** : pas de PostgreSQL applicatif à sécuriser, sauvegarder et mettre à jour.
 
 ### Conséquences
 
-- **Un serveur PostgreSQL, trois bases séparées** : `commandes` (ADR-0001), `mlflow` (ADR-0002) et `airflow` (ADR-0011), chacune avec son utilisateur (ADR-0009).
-- **Deux moteurs dans le système, chacun à sa place** : PostgreSQL pour nos données, MongoDB uniquement comme source de l'ERP. L'abstraction `OrderRepositoryInterface` isole l'entraînement des deux.
-- **Migrations versionnées** avec Alembic : toute évolution du schéma passe par une migration revue dans une pull request.
-- **Contraintes déclarées dans le schéma** (`NOT NULL`, `CHECK`, `UNIQUE` sur `order_id`, clés étrangères commandes ↔ prédictions), en seconde barrière après la validation de l'API.
-- **Sauvegardes** : un `pg_dump` quotidien couvre les trois bases (ADR-0009).
+- **Un seul moteur pour les données de l'application : MongoDB.** PostgreSQL n'existe dans le système que comme base interne d'Airflow (ADR-0011).
+- **Comptes MongoDB** (ADR-0009) : le compte administrateur, détenu par l'équipe après le transfert, sert uniquement à l'administration ; `training_reader`, en lecture seule, sert à l'entraînement.
+- **Validation obligatoire à la lecture**, dans `MongoOrderRepository` uniquement.
+- **Sauvegardes** : vérifier celles des analystes, sinon un `mongodump` quotidien (ADR-0009, ADR-0010).
+- **Model Registry de MLflow** : s'il remplace un jour le stockage fichiers (ADR-0002), il demandera une base SQL, car MLflow ne prend pas MongoDB.
 
 ### Points restant ouverts
 
-- **Copier les données de l'ERP dans PostgreSQL** plutôt que de lire MongoDB à chaque entraînement : utile si l'historique doit être figé pour la reproductibilité, à décider avec l'ADR-0010.
-- **Version de PostgreSQL** à figer, comme les autres images.
+- **Date et modalités du transfert** du compte administrateur, avant la fin du contrat de l'alternant.
+- **Tests sur un vrai MongoDB en CI** (service container), en plus de la collection factice.
 
 ---
 
@@ -573,6 +558,7 @@ Ces choix s'accompagnent des mesures suivantes sur les entrées et les sorties.
 
 **Status :** Accepté
 **Date :** 26/10/2026
+**Révision :** 20/11/2026. Comptes et sauvegardes portés sur MongoDB : l'application n'a pas de base PostgreSQL (ADR-0001, ADR-0006).
 
 ### Contexte
 
@@ -593,7 +579,7 @@ Pour les droits d'accès à la base :
 
 | Option | Avantage | Inconvénient |
 |---|---|---|
-| A. Un seul compte administrateur partagé (comportement par défaut de l'image PostgreSQL) | Simple | Une fuite du mot de passe donne tous les droits : suppression des tables, création de comptes |
+| A. Un seul compte administrateur partagé, ou aucune authentification (comportement par défaut de l'image MongoDB) | Simple | Une fuite du mot de passe donne tous les droits : suppression des tables, création de comptes |
 | B. Des comptes séparés, chacun avec le minimum de droits | Chaque service n'a que les droits utiles : une fuite a un impact limité | Comptes et droits à créer par un script d'initialisation |
 | C. Accès par identité cloud (IAM) avec un service managé | Pas de mot de passe statique | Nécessite le cloud, écarté par l'ADR-0004 |
 
@@ -603,11 +589,11 @@ Pour les droits d'accès à la base :
 
 | Environnement | Droits d'accès | Pourquoi |
 |---|---|---|
-| Dev | **Option A** : un seul compte administrateur | Données synthétiques et jetables, base accessible uniquement depuis le poste. Aucun script de droits à maintenir pour démarrer |
-| CI | **Option B** : comptes séparés, comme en prod | Les erreurs de droits (l'API qui tente de créer une table, l'entraînement qui tente d'écrire) doivent être détectées avant la prod |
+| Dev | **Option A** : MongoDB de dev sans authentification | Données synthétiques et jetables, base accessible uniquement depuis le poste. Aucun script de droits à maintenir pour démarrer |
+| Test | **Option B** : comptes séparés, comme en prod (`docker/mongo/init-users.js`) | Les erreurs de droits (l'API qui tente de créer une table, l'entraînement qui tente d'écrire) doivent être détectées avant la prod |
 | Prod | **Option B** : comptes séparés, chacun avec le minimum de droits | Une fuite de mot de passe n'a qu'un impact limité |
 
-En dev, les commandes sont en mémoire (ADR-0001) : l'option A ne concerne que les bases PostgreSQL lancées sur un poste de développement, par exemple pour tester le cycle complet avec `docker compose`.
+En dev, les commandes sont en mémoire par défaut (ADR-0001) : l'option A ne concerne que le MongoDB du profil `etl` de `docker-compose.dev.yml`, lancé pour tester le cycle complet.
 
 **En dev, l'option A est encadrée** :
 
@@ -615,18 +601,18 @@ En dev, les commandes sont en mémoire (ADR-0001) : l'option A ne concerne que l
 - elle ne contient que des données synthétiques, jamais une copie des données de prod ;
 - son mot de passe est propre au dev et n'est jamais réutilisé en CI ni en prod.
 
-**En CI et en prod, l'option B est complétée par l'isolement réseau, la gestion des secrets, la protection des artéfacts et des sauvegardes.**
+**En test et en prod, l'option B est complétée par l'isolement réseau, la gestion des secrets, la protection des artéfacts et des sauvegardes.**
 
-- **Moindre privilège dans PostgreSQL** :
+- **Moindre privilège dans MongoDB** (l'API n'a aucun accès à une base, ADR-0001) :
 
   | Compte | Droits | Utilisé par |
   |---|---|---|
-  | administrateur (`POSTGRES_USER`) | tous | administration et création du schéma uniquement |
-  | `api_user` | lecture et écriture sur `orders` et `predictions`, aucun droit de modifier le schéma | l'API |
-  | `training_reader` | lecture seule sur `orders` | la commande `train` (l'entraînement ne fait que lire) |
+  | administrateur | tous | administration uniquement. En prod, le compte que l'alternant transmet à l'équipe |
+  | `training_reader` | lecture seule (`read`) sur `livraison_express` | la commande `train` (l'entraînement ne fait que lire) |
+  | `etl_writer` | lecture et écriture (`readWrite`) sur `livraison_express` | l'ETL simulé, en test uniquement. En prod, c'est l'ERP qui écrit |
 
 - **Isolement réseau** :
-  - PostgreSQL et MLflow ne sont pas joignables depuis l'extérieur. Leurs ports ne sont publiés que sur `127.0.0.1`, et les commandes lancées depuis un poste passent par un tunnel SSH ;
+  - MongoDB et MLflow ne sont pas joignables depuis l'extérieur. Leurs ports ne sont publiés que sur `127.0.0.1`, et les commandes lancées depuis un poste passent par un tunnel SSH ;
   - pare-feu du VPS : seuls SSH (22), HTTP (80) et HTTPS (443) sont ouverts ;
   - connexion SSH par clé uniquement, sans mot de passe.
 - **MLflow** : interface et API réservées à l'équipe, par tunnel SSH. Si une exposition devient nécessaire : authentification intégrée de MLflow (`mlflow server --app-name basic-auth`) derrière HTTPS.
@@ -637,23 +623,20 @@ En dev, les commandes sont en mémoire (ADR-0001) : l'option A ne concerne que l
   - `.env` jamais versionné (déjà exclu par `.gitignore`) ni copié dans les images (`.dockerignore` à créer, ADR-0003) ;
   - sur le VPS, fichier lisible par son seul propriétaire (`chmod 600`) ;
   - mots de passe différents par environnement, changés en cas de fuite.
-- **Chiffrement en transit** : HTTPS pour l'API (ADR-0008). Les échanges avec PostgreSQL et MLflow restent sur le réseau Docker interne de la machine, ou passent par le tunnel SSH.
-- **Sauvegardes** : export quotidien de la base (`pg_dump`) et archive du volume `mlflow_data`, stockés hors du VPS, avec un test de restauration régulier.
+- **Chiffrement en transit** : HTTPS pour l'API (ADR-0008). Les échanges avec MongoDB et MLflow restent sur le réseau Docker interne de la machine, ou passent par le tunnel SSH.
+- **Sauvegardes** : celles du MongoDB des analystes, à vérifier (sinon un `mongodump` quotidien), l'export de la base d'Airflow (`pg_dump`) et l'archive du volume `app_data` (modèle et runs MLflow), stockés hors du VPS, avec un test de restauration régulier.
 - **Génération de données synthétiques** : interdite quand `APP_ENV=prod`, ou soumise à une confirmation explicite.
 
 ### Conséquences
 
-- **Deux configurations de base à maintenir** : en dev, le compte administrateur créé par l'image PostgreSQL (`POSTGRES_USER`) suffit ; en CI et en prod, le script d'initialisation crée les comptes séparés. Le code ne fait pas la différence : il reçoit simplement des URL de connexion différentes.
-- **Les erreurs de droits n'apparaissent pas en dev** : en administrateur, tout est permis. C'est la CI, configurée comme la prod, qui les détecte.
+- **Trois configurations à maintenir** : en dev, MongoDB sans authentification ; en test, `docker/mongo/init-users.js` crée les comptes séparés ; en prod, l'équipe les crée avec le compte administrateur. Le code ne fait pas la différence : il reçoit simplement une URL de connexion différente (`TRAINING_SOURCE_URL`).
+- **Les erreurs de droits n'apparaissent pas en dev** : sans authentification, tout est permis. C'est l'environnement de test, configuré comme la prod, qui les détecte.
 - **À implémenter**, au moment de la mise en place de la base et de MLflow :
-  - un script d'initialisation PostgreSQL qui crée les comptes et leurs droits, exécuté en CI et en prod uniquement ;
-  - des variables de connexion distinctes pour l'API et pour l'entraînement (en dev, elles peuvent pointer vers le même compte administrateur) ;
-  - la création du schéma par les migrations, pas au démarrage de l'API (le compte de l'API ne peut pas créer de tables) ;
+  - les comptes MongoDB de prod, créés par l'équipe une fois le compte administrateur obtenu (en test, `init-users.js` le fait déjà) ;
   - les ports liés à `127.0.0.1` dans le compose ;
   - le chargement du modèle en `skops` dans `MlflowModelRepository` ;
   - le garde-fou de la génération de données ;
   - le script de sauvegarde.
-- **Cohérence avec l'ADR-0002**, qui prévoit un utilisateur PostgreSQL par base : ce principe s'applique en CI et en prod.
 - **Si des données réelles sont utilisées un jour** : application du RGPD (minimisation des données, durée de conservation, registre des traitements).
 
 ### Points restant ouverts
@@ -668,6 +651,7 @@ En dev, les commandes sont en mémoire (ADR-0001) : l'option A ne concerne que l
 
 **Status :** Accepté
 **Date :** 29/10/2026
+**Révision :** 20/11/2026. Le MongoDB est celui des analystes, alimenté par l'ERP dans un seul sens ; le compte administrateur est transmis par l'alternant.
 
 ### Contexte
 
@@ -675,7 +659,7 @@ L'entraînement utilise aujourd'hui des commandes synthétiques générées en m
 
 **L'entraînement ne se fait qu'avec les données de l'ERP.** Un ETL met à jour les bases de l'ERP avec les commandes et leur label (la livraison express était-elle possible ?). Les commandes reçues par notre API ne servent pas à l'entraînement.
 
-Cet ADR choisit **la base de l'ERP d'où l'entraînement lit les commandes**. Il ne remet pas en cause l'ADR-0001, qui choisit PostgreSQL pour **le stockage propre à l'application** (commandes reçues par l'API, prédictions, labels réels). Ce sont deux bases distinctes.
+Cet ADR choisit **la base de l'ERP d'où l'entraînement lit les commandes**. L'ADR-0001 conclut que l'application n'a pas de base propre : cette base est la seule source des commandes.
 
 Ce que disent les développeurs de l'ERP :
 
@@ -713,6 +697,8 @@ Ce que la source doit permettre :
 
 **Option B : l'entraînement lit les commandes dans MongoDB.**
 
+Ce MongoDB est celui des analystes : ce n'est pas une base de l'ERP, il en reçoit les données **dans un seul sens** (ERP → MongoDB). Rien de ce que fait l'entraînement ne remonte vers l'ERP. L'équipe en obtient le compte administrateur par l'alternant qui le maintient, ou le reprend lors du transfert de compte à son départ.
+
 - **Ne pas toucher à la production.** MongoDB existe justement pour que l'analyse ne passe plus par la base de production. Brancher l'entraînement sur PostgreSQL referait l'erreur qui a mené à sa création, avec en plus une application critique exposée.
 - **Des données qui ressemblent à celles de l'API.** Les commandes depuis 2023 suivent le schéma actuel. Le modèle apprend sur des commandes comparables à celles qu'il évaluera. Les commandes de 2015 à 2017 auraient demandé d'imputer `weekend` et `preparation_time_min`.
 - **Le volume suffit pour commencer.** Trois ans de commandes, complétés en continu par le flux courant. Le volume nécessaire se vérifie avec les métriques de l'entraînement (ADR-0002), pas a priori.
@@ -738,7 +724,7 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 |---|---|---|
 | Dev, tests unitaires | `memory://` : générateur synthétique | Personne, pas de MongoDB |
 | Dev, test du cycle complet | MongoDB de dev (`mongodb://mongodb:27017/livraison_express`) | L'ETL simulé (`etl_simulator/`), au format de l'ERP |
-| Prod | MongoDB de l'ERP, compte en lecture seule | L'ETL de l'ERP |
+| Prod | MongoDB des analystes, compte en lecture seule | L'ETL de l'ERP |
 
 - **Le MongoDB et l'ETL de dev** sont deux services du profil `etl` de `docker-compose.dev.yml` (`docker compose -f docker-compose.dev.yml --env-file .env.dev --profile etl up -d --build`). Ils n'existent pas en prod.
 - **L'ETL simulé n'utilise pas l'ERP simulé** : `erp_prod_test` joue l'ERP de prod, hors du dépôt, et l'application n'en dépend pas. En prod, `train` joint son MongoDB par son adresse réseau (`TRAINING_SOURCE_URL`), sans réseau Docker partagé : remplacer l'ERP simulé par un vrai serveur ne demande que de changer cette URL. L'ETL simulé écrit directement ce que le vrai ETL chargerait : des commandes au format de l'ERP (`clear`, `suburb`, `business`…), avec un label calculé par une règle métier simulée.
@@ -753,21 +739,22 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 - **Conversion des dates** : `order_date` est lu en `datetime` et ramené à une date pour choisir les commandes les plus récentes du jeu de test.
 - **Comparaison et promotion** (implémentées, voir ADR-0011) : `train` évalue le modèle en service sur le jeu de test du nouveau modèle, et ne remplace le modèle que si le nouveau est meilleur (`PromotionPolicy`). Pour les commandes de l'ERP, le jeu de test est fait des 20 % de commandes arrivées en dernier (`ChronologicalTrainTestSplitter`) : elles sont toujours plus récentes que celles qui ont entraîné le modèle en service.
 - **Sécurité, dans la continuité de l'ADR-0009** :
-  - un compte MongoDB en lecture seule sur `livraison_express.orders` pour l'entraînement (rôle `read`), à créer avec le mainteneur actuel avant son départ ;
+  - un compte MongoDB en lecture seule sur `livraison_express.orders` pour l'entraînement (rôle `read`), créé par l'équipe avec le compte administrateur transmis par l'alternant ;
   - l'authentification MongoDB activée en CI et en prod ;
   - le port MongoDB lié à `127.0.0.1`, et l'accès depuis un poste par tunnel SSH.
 - **Tests de contrat** : la même suite vérifie `InMemoryOrderRepository` et `MongoOrderRepository` (`tests/test_order_repository.py`), avec une collection MongoDB factice. Reste à la faire tourner aussi sur un vrai MongoDB, avec un service container en CI.
+- **Label ajouté par un labelliseur simulé** : l'ERP simulé (`erp_prod_test`) écrit ses commandes sans label. `etl_simulator`, en mode `label` (`etl_simulator/docker-compose.labeler.yml`), joue le résultat réel des livraisons : il ajoute `express_eligible` aux commandes qui n'en ont pas, avec la règle métier cachée du notebook, sans toucher au reste du document. Le label est tiré à partir de l'`order_id`, donc stable même si l'ERP réécrit une commande. Une commande à laquelle la règle ne s'applique pas (variable à `null`, valeur inconnue) reste sans label, donc hors de l'entraînement. En dev et en test, le mode `generate` écrit des commandes déjà labellisées, comme avant.
 - **Passation avant la fin du contrat de l'alternant** : documenter la base (collections, index, sauvegardes, alimentation par l'ERP) et désigner un responsable dans l'équipe.
 - **Un historique plus court** : pas de saisonnalité sur plusieurs années. C'est accepté tant que les métriques du modèle restent bonnes.
 
 ### Points restant ouverts
 
-- **L'ETL de l'ERP écrit-il le label ?** Le MongoDB de l'ERP (simulé par `erp_prod_test`) ne contient aujourd'hui aucun label : sans lui, l'entraînement en prod reçoit 0 commande. Il faut savoir où le SI connaît le résultat réel des livraisons, et qui écrit l'ETL s'il n'existe pas.
+- **Source réelle du label** : l'ERP n'envoie aucun label, et ses commandes ne contiennent rien d'où le déduire (ni date ni statut de livraison). Dans la simulation, le labelliseur le remplace (voir « Conséquences ») ; dans une vraie entreprise, il faudra savoir où le SI connaît le résultat réel des livraisons, et qui l'écrit dans MongoDB.
 - **Nom du champ du label** : `express_eligible` est supposé, comme la cible du modèle et l'ETL simulé. À confirmer avec l'ERP, sinon changer `LABEL_FIELD` dans `mongo_order_repository.py`.
 - **Taille du jeu de test** de la comparaison (20 % des commandes aujourd'hui, ou un nombre de semaines) et **écart minimal** pour qu'un score soit jugé meilleur (`PROMOTION_MIN_GAIN`, 0 aujourd'hui).
 - **Récupérer l'historique 2015-2022** si les métriques montrent qu'il manque des données : un export ponctuel en lecture seule depuis PostgreSQL, en heures creuses, vers MongoDB. Il faut pour cela retrouver quelqu'un qui a les droits sur PostgreSQL.
-- **Qui reprend MongoDB** après le départ de l'alternant.
-- **Sauvegardes de MongoDB** : existent-elles aujourd'hui ? Sinon, un `mongodump` quotidien sur le modèle du `pg_dump` de l'ADR-0009.
+- **Transfert du compte administrateur** de MongoDB à l'équipe : date et modalités, avant la fin du contrat de l'alternant.
+- **Sauvegardes de MongoDB** : existent-elles aujourd'hui ? Sinon, un `mongodump` quotidien (ADR-0009).
 
 ---
 
@@ -835,4 +822,4 @@ Raisons :
 - **Seuil** `RETRAIN_MIN_NEW_ORDERS` à ajuster au volume réel des labels de l'ETL.
 - **Alertes** en cas d'échec du DAG (e-mail, Slack).
 - **Coupure de l'API** de quelques secondes à chaque promotion, le temps du redémarrage. Un rechargement à chaud du modèle la supprimerait.
-- **Base de métadonnées** : PostgreSQL dédié à Airflow. Il pourra être partagé avec MLflow et les commandes (ADR-0001, ADR-0002) quand ce serveur PostgreSQL existera.
+- **Base de métadonnées** : PostgreSQL dédié à Airflow, qui l'exige. C'est le seul PostgreSQL du système : les données de l'application sont dans MongoDB (ADR-0006).

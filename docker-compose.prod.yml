@@ -11,13 +11,13 @@
 # Rien n'est construit ici : l'image est celle que la CD a publiée sur ghcr.io,
 # dans la version APP_VERSION (voir CONTRIBUTING.md, « CI/CD »).
 #
-# La base est le MongoDB de l'ERP (ADR-0010). C'est un service externe, sur une
-# autre machine : ce compose ne le lance pas et ne partage aucun réseau Docker avec
+# La base est le MongoDB des analystes (ADR-0010), alimenté par l'ERP dans un seul
+# sens. C'est un service externe, sur une autre machine : ce compose ne le lance pas et ne partage aucun réseau Docker avec
 # lui. `train` s'y connecte par son adresse, donnée par TRAINING_SOURCE_URL, comme à
 # n'importe quel service distant. L'API ne s'y connecte jamais.
 #
-# Faute de serveur, l'ERP est simulé hors de ce dépôt (dossier erp_prod_test, à côté
-# du projet) et publie MongoDB sur le port 27017 de sa machine. Sur le même poste,
+# Faute de serveur, l'ERP et ce MongoDB sont simulés hors de ce dépôt (dossier
+# erp_prod_test, à côté du projet), qui publie MongoDB sur le port 27017 de sa machine. Sur le même poste,
 # cette machine est `host.docker.internal` ; sur un autre poste, son adresse IP ou
 # son nom DNS.
 #
@@ -63,7 +63,7 @@ x-app: &app
 
 # Réglages communs aux services d'Airflow. Le DAG `retrain_express_model` (airflow/dags/)
 # réentraîne le modèle chaque nuit si assez de nouvelles commandes labellisées sont
-# arrivées dans le MongoDB de l'ERP, avec l'image de prod, puis redémarre l'API si le
+# arrivées dans le MongoDB des analystes, avec l'image de prod, puis redémarre l'API si le
 # modèle a changé. Exécuteur LocalExecutor : les tâches tournent dans le scheduler, sans
 # Celery ni Redis ; `train` est un conteneur de l'image de l'application, lancé à travers
 # `docker-proxy`. Les secrets n'ont pas de valeur par défaut : sans eux, Compose refuse
@@ -85,7 +85,7 @@ x-airflow: &airflow
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:?AIRFLOW_API_SECRET_KEY manquant}
     # Configuration du DAG retrain_express_model.
     RETRAIN_APP_IMAGE: ghcr.io/golem953/eligibilite-livraison-express:${APP_VERSION:?APP_VERSION manquant (par exemple 0.2.0)}
-    RETRAIN_TRAINING_SOURCE_URL: ${TRAINING_SOURCE_URL:?TRAINING_SOURCE_URL manquant (MongoDB de l'ERP)}
+    RETRAIN_TRAINING_SOURCE_URL: ${TRAINING_SOURCE_URL:?TRAINING_SOURCE_URL manquant (MongoDB des analystes)}
     RETRAIN_MIN_NEW_ORDERS: ${RETRAIN_MIN_NEW_ORDERS:-100}
     RETRAIN_SCHEDULE: ${RETRAIN_SCHEDULE:-0 2 * * *}
     RETRAIN_PROMOTION_METRIC: ${PROMOTION_METRIC:-f1_score}
@@ -96,7 +96,7 @@ x-airflow: &airflow
   volumes:
     - ./airflow/dags:/opt/airflow/dags:ro
     - airflow_logs:/opt/airflow/logs
-  # Le MongoDB de l'ERP est joint par son adresse, comme depuis le service train.
+  # Le MongoDB des analystes est joint par son adresse, comme depuis le service train.
   extra_hosts:
     - "host.docker.internal:host-gateway"
   security_opt:
@@ -141,8 +141,8 @@ services:
       MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
       RANDOM_SEED: ${RANDOM_SEED:-42}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # Adresse du MongoDB de l'ERP, avec un compte en lecture seule (ADR-0010).
-      TRAINING_SOURCE_URL: ${TRAINING_SOURCE_URL:?TRAINING_SOURCE_URL manquant (MongoDB de l'ERP)}
+      # Adresse du MongoDB des analystes, avec un compte en lecture seule (ADR-0010).
+      TRAINING_SOURCE_URL: ${TRAINING_SOURCE_URL:?TRAINING_SOURCE_URL manquant (MongoDB des analystes)}
       MODEL_PATH: /data/artifacts/express_delivery_model.joblib
       MLFLOW_TRACKING_URI: /data/mlruns
       MLFLOW_ALLOW_FILE_STORE: "true"

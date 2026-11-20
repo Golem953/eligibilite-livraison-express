@@ -121,10 +121,10 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  # --- Dev uniquement : un MongoDB et un ETL simulés à la place de ceux de l'ERP (ADR-0010) ---
+  # --- Dev uniquement : un MongoDB et un ETL simulés à la place de ceux de la prod (ADR-0010) ---
   #   docker compose -f docker-compose.dev.yml --env-file .env.dev --profile etl up -d --build
   #   TRAINING_SOURCE_URL=mongodb://mongodb:27017/livraison_express dans .env.dev, puis train.
-  # En prod, ces deux services n'existent pas : l'entraînement lit le MongoDB de l'ERP.
+  # En prod, ces deux services n'existent pas : l'entraînement lit le MongoDB des analystes.
   mongodb:
     <<: *hardening
     image: mongo:8.3.13@sha256:e16e606f792ea89d2b4907b54e5e31eb86a7a23e27231dce3a982cc8f2d73cd2
@@ -135,7 +135,7 @@ services:
       - mongo_dev_data:/data/db
       - mongo_dev_config:/data/configdb
     ports:
-      # 27018 : le port 27017 reste libre pour le MongoDB de l'ERP simulé.
+      # 27018 : le port 27017 reste libre pour le MongoDB des analystes simulé (erp_prod_test).
       - "127.0.0.1:${MONGO_PORT:-27018}:27017"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
