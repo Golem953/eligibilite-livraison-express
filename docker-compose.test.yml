@@ -38,6 +38,10 @@ x-app: &app
   environment:
     MODEL_THRESHOLD: ${MODEL_THRESHOLD:-0.5}
     MODEL_VERSION: ${MODEL_VERSION:-1.0.0}
+    # Canary du modèle (ADR-0005) : part des commandes (0 à 100) prédite par le modèle canary.
+    CANARY_PERCENT: ${CANARY_PERCENT:-0}
+    CANARY_MODEL_VERSION: ${CANARY_MODEL_VERSION:-canary}
+    CANARY_MODEL_PATH: /data/artifacts/canary/express_delivery_model.joblib
     RANDOM_SEED: ${RANDOM_SEED:-42}
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
     # Compte en lecture seule : l'entraînement ne peut rien écrire dans MongoDB.

@@ -83,7 +83,9 @@ def test_predict_returns_the_prediction_contract(client_with_model, order):
         "probability",
         "model_version",
         "prediction_timestamp",
+        "order_id",
     }
+    assert body["order_id"] == "CMD-TEST"
     assert body["express_eligible"] is True
     assert body["decision"] == "oui"
     assert body["probability"] == 0.8

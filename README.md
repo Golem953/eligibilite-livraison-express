@@ -45,6 +45,9 @@ Copier `.env.example` en `.env`. Une clé laissée vide prend la valeur par déf
 | `MODEL_PATH` | `notebooks/artifacts/express_delivery_model.joblib` | Fichier du modèle écrit par `train` et lu par l'API |
 | `MODEL_THRESHOLD` | `0.5` | Seuil de probabilité au-delà duquel la commande est éligible |
 | `MODEL_VERSION` | `1.0.0` | Version renvoyée dans chaque prédiction |
+| `CANARY_PERCENT` | `0` | Part des commandes (0 à 100) prédite par le modèle canary (ADR-0005). `0` = canary désactivé |
+| `CANARY_MODEL_PATH` | `notebooks/artifacts/canary/express_delivery_model.joblib` | Fichier du modèle canary |
+| `CANARY_MODEL_VERSION` | `canary` | Version renvoyée par les prédictions du modèle canary |
 | `RANDOM_SEED` | `42` | Graine de la génération des données et de l'entraînement |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` ou `ERROR` |
 

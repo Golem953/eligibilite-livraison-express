@@ -36,4 +36,5 @@ class MLPredict:
             probability=round(probability, 4),
             model_version=self.model_version,
             prediction_timestamp=datetime.now(timezone.utc).isoformat(),
+            order_id=order.order_id,
         )
