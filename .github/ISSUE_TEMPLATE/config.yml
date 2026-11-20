@@ -1,0 +1,6 @@
+# Les vulnérabilités ne passent pas par une issue publique (SECURITY.md).
+blank_issues_enabled: false
+contact_links:
+  - name: Signaler une vulnérabilité
+    url: https://github.com/Golem953/eligibilite-livraison-express/security/policy
+    about: Ne publiez pas une faille dans une issue, suivez la politique de sécurité.

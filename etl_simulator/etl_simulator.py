@@ -1,15 +1,22 @@
-"""ETL simulé, pour le développement uniquement (ADR-0010).
+"""ETL simulé (ADR-0009) : il joue un système externe, pas l'application.
 
-En prod, l'ETL de l'ERP met à jour le MongoDB de l'ERP avec les commandes et leur
-label (`express_eligible`). En dev, il n'y a ni ERP ni ETL : ce programme écrit dans
-un MongoDB de dev ce que l'ETL y chargerait, au même format que les commandes de
-l'ERP (mêmes champs, mêmes valeurs : `clear`, `suburb`, `business`...).
+L'ERP alimente le MongoDB des analystes avec ses commandes, mais sans leur label
+(`express_eligible`) : le résultat réel d'une livraison n'est connu qu'après coup.
+Ce programme simule ce qui manque, avec la règle métier cachée du notebook, au format
+de l'ERP (mêmes champs, mêmes valeurs : `clear`, `suburb`, `business`...).
 
-Il ne fait pas partie de l'application : il simule un système externe, et tourne
-dans son propre conteneur. L'application ne fait que lire le résultat avec
-`MongoOrderRepository`.
+Deux modes, choisis par `MODE` :
 
-Scénario :
+- `generate` (par défaut, dev et test) : il n'y a pas d'ERP. Le programme invente
+  les commandes, déjà labellisées, et les écrit dans le MongoDB de l'environnement ;
+- `label` (prod simulée) : l'ERP simulé (`erp_prod_test`) écrit ses commandes dans le
+  MongoDB des analystes. Le programme ajoute seulement `express_eligible` aux
+  commandes qui n'en ont pas, toutes les `INTERVAL_SECONDS` secondes, sans toucher
+  au reste du document.
+
+L'application ne fait que lire le résultat avec `MongoOrderRepository`.
+
+Scénario du mode `generate` :
 
 1. un historique de commandes labellisées, du 1er janvier 2023 à hier ;
 2. puis un lot de commandes toutes les `INTERVAL_SECONDS` secondes, chaque lot
@@ -29,13 +36,27 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from pymongo import DESCENDING, MongoClient, ReplaceOne
+from pymongo import DESCENDING, MongoClient, ReplaceOne, UpdateOne
 
 logger = logging.getLogger("etl_simulator")
 
 COLLECTION_NAME = "orders"
 LABEL_FIELD = "express_eligible"
 HISTORY_START = date(2023, 1, 1)
+MODES = ("generate", "label")
+# Variables utilisées par la règle métier : sans l'une d'elles, pas de label.
+RULE_FIELDS = (
+    "hour",
+    "weekend",
+    "distance_km",
+    "weight_kg",
+    "stock_available",
+    "preparation_time_min",
+    "carrier_capacity",
+    "weather",
+    "delivery_zone",
+    "customer_type",
+)
 
 Order = dict[str, object]
 
@@ -49,6 +70,7 @@ class EtlConfig:
     batch_size: int
     interval_seconds: float
     live_order_limit: int
+    mode: str = "generate"
 
     @classmethod
     def from_env(cls) -> EtlConfig:
@@ -58,6 +80,7 @@ class EtlConfig:
             batch_size=int(os.environ.get("BATCH_SIZE", "5")),
             interval_seconds=float(os.environ.get("INTERVAL_SECONDS", "5")),
             live_order_limit=int(os.environ.get("LIVE_ORDER_LIMIT", "0")),
+            mode=os.environ.get("MODE", "generate"),
         )
 
 
@@ -99,7 +122,24 @@ class LabeledOrderGenerator:
         ]
 
     def batch(self, first_sequence: int, size: int, order_date: date) -> list[Order]:
-        return [self.build(sequence, order_date) for sequence in range(first_sequence, first_sequence + size)]
+        return [
+            self.build(sequence, order_date)
+            for sequence in range(first_sequence, first_sequence + size)
+        ]
+
+    def label(self, order: Order) -> int | None:
+        """Label d'une commande de l'ERP, ou `None` si la règle ne peut pas s'appliquer.
+
+        Tiré à partir de l'`order_id` : relabelliser une commande donne toujours le même
+        label, même si l'ERP l'a réécrite entre-temps.
+        """
+        if any(order.get(field) is None for field in RULE_FIELDS):
+            return None
+        if order["weather"] not in self.WEATHER_PENALTY:
+            return None
+        if order["delivery_zone"] not in self.ZONE_PENALTY:
+            return None
+        return int(random.Random(order["order_id"]).random() < self._probability(order))
 
     def _probability(self, order: Order) -> float:
         """Règle métier simulée : plus la commande est loin, lourde ou longue à préparer, moins l'express est possible."""
@@ -136,6 +176,22 @@ class MongoLoader:
         )
         return result.upserted_count + result.modified_count
 
+    def unlabeled(self) -> list[Order]:
+        """Commandes écrites par l'ERP qui n'ont pas encore de label."""
+        return list(self._collection.find({LABEL_FIELD: {"$exists": False}}))
+
+    def set_labels(self, labels: dict[str, int]) -> int:
+        """Ajoute le label aux commandes, sans réécrire le reste du document."""
+        if not labels:
+            return 0
+        result = self._collection.bulk_write(
+            [
+                UpdateOne({"order_id": order_id}, {"$set": {LABEL_FIELD: label}})
+                for order_id, label in labels.items()
+            ]
+        )
+        return result.modified_count
+
     def last_sequence(self) -> int:
         last = self._collection.find_one({}, {"order_id": 1}, sort=[("order_id", DESCENDING)])
         return int(last["order_id"].removeprefix("ERP-")) if last else 0
@@ -165,6 +221,31 @@ def run(config: EtlConfig, generator: LabeledOrderGenerator, loader: MongoLoader
         time.sleep(config.interval_seconds)
 
 
+def labels_for(orders: list[Order], generator: LabeledOrderGenerator) -> dict[str, int]:
+    """Labels des commandes que la règle peut traiter, indexés par `order_id`."""
+    labels = {}
+    for order in orders:
+        label = generator.label(order)
+        if label is not None:
+            labels[order["order_id"]] = label
+    return labels
+
+
+def label_forever(config: EtlConfig, generator: LabeledOrderGenerator, loader: MongoLoader) -> None:
+    """Mode `label` : labellise les nouvelles commandes de l'ERP, en continu."""
+    while True:
+        pending = loader.unlabeled()
+        labels = labels_for(pending, generator)
+        written = loader.set_labels(labels)
+        if pending:
+            logger.info(
+                "Labellisation : %d commandes labellisées, %d ignorées (variable absente ou inconnue)",
+                written,
+                len(pending) - len(labels),
+            )
+        time.sleep(config.interval_seconds)
+
+
 def main() -> None:
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -173,9 +254,14 @@ def main() -> None:
     # En DEBUG, pymongo journalise chaque connexion : seuls ses avertissements nous intéressent.
     logging.getLogger("pymongo").setLevel(logging.WARNING)
     config = EtlConfig.from_env()
+    if config.mode not in MODES:
+        raise ValueError(f"MODE doit valoir {' ou '.join(MODES)}, pas {config.mode!r}")
     loader = MongoLoader(config.mongo_uri)
     try:
-        run(config, LabeledOrderGenerator(), loader)
+        if config.mode == "label":
+            label_forever(config, LabeledOrderGenerator(), loader)
+        else:
+            run(config, LabeledOrderGenerator(), loader)
     finally:
         loader.close()
 

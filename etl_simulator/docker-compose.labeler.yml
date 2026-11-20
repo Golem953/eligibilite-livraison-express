@@ -1,0 +1,36 @@
+# Labellisation simulée (ADR-0009) : joue le « résultat réel des livraisons ».
+#
+# L'ERP simulé (dossier erp_prod_test, à côté du projet) écrit ses commandes dans le
+# MongoDB des analystes, sans label. Ce service y ajoute `express_eligible` aux
+# commandes qui n'en ont pas, en continu, pour que l'entraînement de la prod ait des
+# données. C'est un système externe simulé : il ne fait pas partie de
+# docker-compose.prod.yml.
+#
+#   docker compose -f etl_simulator/docker-compose.labeler.yml up -d --build
+#
+# ERP_MONGO_URI : adresse du MongoDB des analystes. Par défaut, celui de erp_prod_test
+# lancé sur le même poste sur le port 27117 (voir CONTRIBUTING.md), sans authentification.
+
+name: livraison-express-labeler
+
+services:
+  labeler:
+    build:
+      context: .
+    image: livraison-express-etl-simulator:labeler
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MODE: label
+      MONGO_URI: ${ERP_MONGO_URI:-mongodb://host.docker.internal:27117/livraison_express}
+      INTERVAL_SECONDS: ${INTERVAL_SECONDS:-5}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # Rend host.docker.internal disponible aussi sous Linux (Docker Desktop le fournit déjà).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

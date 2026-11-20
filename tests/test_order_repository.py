@@ -1,6 +1,7 @@
 """Repositories de commandes : un même contrat pour toutes les implémentations (ADR-0001)."""
 
 import dataclasses
+import os
 
 import pytest
 from fakes.fake_mongo_collection import FakeMongoCollection
@@ -15,13 +16,23 @@ from app.infrastructure.repository.mongo_order_repository import (
     MongoOrderRepository,
 )
 
+# Base MongoDB jetable (en CI : le service MongoDB du job). Sans elle, les tests sur un
+# vrai MongoDB sont sautés ; la collection factice couvre le même contrat.
+TEST_MONGO_URL = os.environ.get("TEST_MONGO_URL")
 
-@pytest.fixture(params=["memory", "mongo"])
+
+@pytest.fixture(params=["memory", "mongo", "mongo-reel"])
 def repository(request):
-    """Chaque test de contrat tourne sur les deux implémentations."""
+    """Chaque test de contrat tourne sur la mémoire, la collection factice et un vrai MongoDB."""
     if request.param == "memory":
         return InMemoryOrderRepository()
-    return MongoOrderRepository(FakeMongoCollection())
+    if request.param == "mongo":
+        return MongoOrderRepository(FakeMongoCollection())
+    if not TEST_MONGO_URL:
+        pytest.skip("TEST_MONGO_URL absent : pas de MongoDB de test")
+    repository = MongoOrderRepository.from_url(TEST_MONGO_URL)
+    repository._collection.delete_many({})
+    return repository
 
 
 def with_id(order, order_id):

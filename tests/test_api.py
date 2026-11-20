@@ -27,7 +27,7 @@ def client_with_model(fake_model):
 
 
 def test_api_does_not_import_training_code():
-    """ADR-0007 : l'API n'importe ni MLflow ni le code d'entraînement.
+    """ADR-0008 : l'API n'importe ni MLflow ni le code d'entraînement.
 
     Lancé dans un processus séparé, car d'autres tests ont déjà importé MLflow.
     """
@@ -83,7 +83,9 @@ def test_predict_returns_the_prediction_contract(client_with_model, order):
         "probability",
         "model_version",
         "prediction_timestamp",
+        "order_id",
     }
+    assert body["order_id"] == "CMD-TEST"
     assert body["express_eligible"] is True
     assert body["decision"] == "oui"
     assert body["probability"] == 0.8

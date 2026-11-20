@@ -12,3 +12,4 @@ class PredictionEntity:
     probability: float
     model_version: str
     prediction_timestamp: str
+    order_id: str | None = None

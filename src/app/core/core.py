@@ -7,7 +7,7 @@ configuration reçue en paramètre :
 - `build_training_service` pour la commande `train`, avec la source des commandes
   choisie par `build_order_repository`.
 
-Les deux sont indépendants (ADR-0007) : l'API n'importe ni MLflow ni le code
+Les deux sont indépendants (ADR-0008) : l'API n'importe ni MLflow ni le code
 d'entraînement. Changer d'implémentation (PostgreSQL, registre MLflow...) se fait
 ici, sans toucher au reste du code.
 """
@@ -19,6 +19,7 @@ import logging
 from ..config import Settings
 from ..domain.interface.order_repository_interface import OrderRepositoryInterface
 from ..infrastructure.repository.file_model_repository import FileModelRepository
+from .learning.canary_predict import CanaryPredict
 from .learning.ml_predict import MLPredict
 
 logger = logging.getLogger(__name__)
@@ -35,21 +36,47 @@ def configure_logging(settings: Settings) -> None:
     )
 
 
-def build_prediction_service(settings: Settings) -> MLPredict | None:
-    """Charge le modèle enregistré. Retourne `None` s'il n'y en a pas encore."""
+def build_prediction_service(settings: Settings) -> MLPredict | CanaryPredict | None:
+    """Charge le modèle enregistré. Retourne `None` s'il n'y en a pas encore.
+
+    Avec `CANARY_PERCENT` > 0, charge aussi le modèle canary et répartit les commandes
+    entre les deux (ADR-0005). Sans modèle canary, tout va au modèle stable.
+    """
     model = FileModelRepository(settings.model_path).load()
     if model is None:
         logger.warning("Aucun modèle disponible (%s)", settings.model_path)
         return None
-    return MLPredict(
+    stable = MLPredict(
         model,
         threshold=settings.model_threshold,
         model_version=settings.model_version,
     )
+    if settings.canary_percent == 0:
+        return stable
+
+    canary_model = FileModelRepository(settings.canary_model_path).load()
+    if canary_model is None:
+        logger.warning(
+            "CANARY_PERCENT=%d mais aucun modèle canary (%s) : tout va au modèle stable",
+            settings.canary_percent,
+            settings.canary_model_path,
+        )
+        return stable
+    logger.info(
+        "Canary actif : %d %% des commandes sur la version %s",
+        settings.canary_percent,
+        settings.canary_model_version,
+    )
+    canary = MLPredict(
+        canary_model,
+        threshold=settings.model_threshold,
+        model_version=settings.canary_model_version,
+    )
+    return CanaryPredict(stable, canary, settings.canary_percent)
 
 
 def build_order_repository(settings: Settings) -> OrderRepositoryInterface:
-    """Choisit la source des commandes selon `TRAINING_SOURCE_URL` (ADR-0010)."""
+    """Choisit la source des commandes selon `TRAINING_SOURCE_URL` (ADR-0009)."""
     url = settings.training_source_url
     if url == "memory://":
         from ..infrastructure.implementation.dev.order_generator import generate_labeled_orders
@@ -80,7 +107,7 @@ def build_training_service(settings: Settings):
     from .training_service import TrainingService
 
     # Commandes de l'ERP : test sur les plus récentes, pour comparer le nouveau modèle et
-    # le modèle en service sur des commandes qu'aucun n'a vues (ADR-0010). En mémoire :
+    # le modèle en service sur des commandes qu'aucun n'a vues (ADR-0009). En mémoire :
     # découpage aléatoire du notebook.
     splitter_class = (
         TrainTestSplitter
