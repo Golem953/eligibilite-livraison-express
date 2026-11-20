@@ -2,7 +2,7 @@
 
 Chaque nuit :
 
-1. ``enough_new_orders`` compte les commandes labellisées du MongoDB de l'ERP. S'il en
+1. ``enough_new_orders`` compte les commandes labellisées du MongoDB des analystes. S'il en
    est arrivé moins de ``RETRAIN_MIN_NEW_ORDERS`` depuis le dernier entraînement, le
    DAG s'arrête là : les tâches suivantes sont sautées ;
 2. ``train`` lance l'image de prod de l'application (``python -m app train``) dans un

@@ -3,6 +3,7 @@
 L'ETL n'est pas un paquet de l'application : il est importé depuis son dossier.
 """
 
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -11,7 +12,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "etl_simulator"))
 
-from etl_simulator import LABEL_FIELD, LabeledOrderGenerator, labels_for  # noqa: E402
+from etl_simulator import (  # noqa: E402
+    LABEL_FIELD,
+    LabeledOrderGenerator,
+    MongoLoader,
+    labels_for,
+)
+
+TEST_MONGO_URL = os.environ.get("TEST_MONGO_URL")
 
 
 @pytest.fixture
@@ -50,3 +58,26 @@ def test_order_the_rule_cannot_handle_is_left_unlabeled(generator, change):
     order = erp_order(generator, 10_001) | change
 
     assert labels_for([order], generator) == {}
+
+
+@pytest.mark.skipif(not TEST_MONGO_URL, reason="TEST_MONGO_URL absent : pas de MongoDB de test")
+def test_labeler_on_real_mongo_only_adds_the_missing_labels(generator):
+    """Vrai MongoDB : seules les commandes sans label sont lues, et seul le label est écrit."""
+    loader = MongoLoader(TEST_MONGO_URL)
+    collection = loader._collection
+    collection.delete_many({})
+    already = generator.build(1, date(2024, 3, 1)) | {LABEL_FIELD: 0, "_marker": "deja"}
+    pending = erp_order(generator, 2) | {"_marker": "erp"}
+    collection.insert_many([dict(already), dict(pending)])
+
+    unlabeled = loader.unlabeled()
+    written = loader.set_labels(labels_for(unlabeled, generator))
+
+    assert [order["order_id"] for order in unlabeled] == [pending["order_id"]]
+    assert written == 1
+    stored = collection.find_one({"order_id": pending["order_id"]}, {"_id": 0})
+    assert stored[LABEL_FIELD] == generator.label(pending)
+    assert stored["_marker"] == "erp"
+    assert collection.find_one({"order_id": already["order_id"]})[LABEL_FIELD] == 0
+    assert loader.unlabeled() == []
+    loader.close()

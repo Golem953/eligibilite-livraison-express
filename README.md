@@ -4,7 +4,16 @@ Prédiction de l'éligibilité d'une commande à la livraison express.
 
 Une commande est décrite par sa distance, son poids, son montant, la météo, la zone de livraison, le type de client, etc. Un modèle scikit-learn (régression logistique) calcule une probabilité, puis un seuil la transforme en décision « oui » ou « non ». Le modèle est entraîné par une commande en ligne, puis servi par une API FastAPI.
 
-> **Version lite.** Les commandes sont générées en mémoire au démarrage (données synthétiques) et le modèle est un fichier local. Les évolutions prévues (base de données, registre MLflow, Docker, authentification) sont décrites dans [ADR.md](ADR.md).
+Ce qui est en place :
+
+| Brique | Mise en œuvre | Décision |
+|---|---|---|
+| Données d'entraînement | MongoDB des analystes, alimenté par l'ERP, lu en lecture seule. En dev : données synthétiques en mémoire ou MongoDB simulé | [ADR-0001](ADR.md), [ADR-0006](ADR.md), [ADR-0010](ADR.md) |
+| Entraînement | `python -m app train` : le nouveau modèle (challenger) remplace le modèle en service (champion) seulement s'il fait mieux sur les mêmes commandes récentes. Runs suivis dans MLflow | [ADR-0002](ADR.md), [ADR-0007](ADR.md) |
+| Orchestration | Airflow : réentraînement chaque nuit, s'il est arrivé assez de nouvelles commandes labellisées | [ADR-0011](ADR.md) |
+| Service | API FastAPI, canary du modèle à 90/10 (`CANARY_PERCENT`) | [ADR-0005](ADR.md) |
+| Déploiement | Docker Compose, un fichier par environnement (dev, test, prod), image de prod minimale | [ADR-0003](ADR.md), [ADR-0004](ADR.md) |
+| CI/CD | GitHub Actions : Ruff, pytest (avec un vrai MongoDB), chargement du DAG Airflow, publication de l'image sur GitHub Container Registry | [CONTRIBUTING.md](CONTRIBUTING.md#cicd) |
 
 ## Documentation
 
@@ -95,7 +104,7 @@ Même chose avec `development` (→ `.env.dev`) ou `test` (→ `.env.test`). Pou
 |---|---|
 | `development` | aucune : pas de mot de passe, commandes en mémoire (`memory://`) |
 | `test` | `MONGO_ROOT_PASSWORD`, `MONGO_TRAINING_PASSWORD`, `MONGO_ETL_PASSWORD` |
-| `production` | `TRAINING_SOURCE_URL` (contient le mot de passe du compte MongoDB de l'ERP), `AIRFLOW_ADMIN_PASSWORD`, `AIRFLOW_DB_PASSWORD`, `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET`, `AIRFLOW_API_SECRET_KEY` |
+| `production` | `TRAINING_SOURCE_URL` (contient le mot de passe du compte MongoDB des analystes), `AIRFLOW_ADMIN_PASSWORD`, `AIRFLOW_DB_PASSWORD`, `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET`, `AIRFLOW_API_SECRET_KEY` |
 
 Les autres valeurs (version de l'image, seuil du modèle, ports, planification…) ne sont pas sensibles : ce sont de vraies variables.
 

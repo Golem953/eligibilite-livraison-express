@@ -50,6 +50,20 @@ jobs:
   test:
     name: Tests (pytest)
     runs-on: ubuntu-24.04
+    # MongoDB jetable, même image que les composes : les tests de contrat du repository
+    # et du labelliseur tournent aussi sur une vraie base (ADR-0010).
+    services:
+      mongodb:
+        image: mongo:8.3.13@sha256:e16e606f792ea89d2b4907b54e5e31eb86a7a23e27231dce3a982cc8f2d73cd2
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_MONGO_URL: mongodb://localhost:27017/livraison_express_test
     steps:
       - uses: actions/checkout@v4
 
@@ -67,10 +81,25 @@ jobs:
       - name: pytest
         run: pytest -v
 
+  dag:
+    name: DAG Airflow (chargement)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # L'image Airflow de la prod : le DAG est chargé avec les mêmes versions qu'en prod.
+      - name: Construire l'image Airflow
+        run: docker build -t livraison-express-airflow:ci airflow
+
+      - name: Charger le DAG
+        run: >-
+          docker run --rm -v "$PWD/airflow:/opt/airflow/check:ro" livraison-express-airflow:ci
+          python /opt/airflow/check/check_dag.py
+
   docker:
     name: Build de l'image prod
     runs-on: ubuntu-24.04
-    needs: [lint, test]
+    needs: [lint, test, dag]
     # Aucune image avant la release : seulement sur release/* et hotfix/* (push ou PR vers
     # main). Sur dev, les feat/* et dans la CD (qui construit elle-même), ce job est sauté.
     if: >-

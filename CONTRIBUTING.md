@@ -123,7 +123,7 @@ Quatre workflows GitHub Actions, dans `.github/workflows/` :
 
 | Workflow | Déclenchement | Étapes |
 |---|---|---|
-| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff, pytest. Build de l'image `prod` (sans publication) **uniquement sur `release/*` et `hotfix/*`** : aucune image n'est construite avant la release |
+| `ci.yml` (CI) | push sur `dev`, `release/*` et `hotfix/*` ; pull request vers `dev` ou `main` | Ruff ; pytest, avec un MongoDB jetable pour les tests sur une vraie base ; chargement du DAG Airflow dans l'image Airflow de la prod (`airflow/check_dag.py`). Build de l'image `prod` (sans publication) **uniquement sur `release/*` et `hotfix/*`** : aucune image n'est construite avant la release |
 | `origine.yml` | pull request vers `main` | Refuse toute branche source autre que `release/x.y.z` ou `hotfix/x.y.z`, ou une version déjà taguée |
 | `release.yml` (bouton) | *Actions → Release → Run workflow* | Calcule la version depuis le dernier tag, crée `release/x.y.z` sur `dev` et ouvre la PR vers `main` |
 | `cd.yml` (CD) | push sur `main`, c'est-à-dire le merge d'une `release/` ou d'un `hotfix/` | Version lue dans le nom de la branche, CI complète, publication de l'image sur ghcr.io, tag `vx.y.z`, release GitHub, suppression de la branche ; après un hotfix, PR de report vers `dev` |
@@ -153,7 +153,7 @@ Chaque environnement a **un seul** fichier Compose, `docker-compose.<environneme
 |---|---|---|---|---|---|
 | Développement sur son poste | `feat/*`, `dev` | `docker-compose.dev.yml` | `.env.dev` | `livraison-express:dev`, construite : tout le dépôt, avec pytest et ruff | Aucune par défaut (`memory://`) ; MongoDB et ETL simulés avec le profil `etl` |
 | Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `docker-compose.test.yml` | `.env.test` | `livraison-express:test`, construite : identique à la prod | MongoDB de test, avec authentification, alimenté par l'ETL simulé |
-| Fusion dans `main` | `main` | `docker-compose.prod.yml` | `.env.prod` | `ghcr.io/golem953/eligibilite-livraison-express:<version>`, publiée par la CD | MongoDB de l'ERP, service externe joint par son adresse, lu en lecture seule |
+| Fusion dans `main` | `main` | `docker-compose.prod.yml` | `.env.prod` | `ghcr.io/golem953/eligibilite-livraison-express:<version>`, publiée par la CD | MongoDB des analystes, service externe joint par son adresse, lu en lecture seule |
 
 ### En développement
 
@@ -210,7 +210,7 @@ Les étapes `test` et `prod` étant identiques, l'image validée en release est 
 
 Airflow fait partie de `docker-compose.prod.yml` : il démarre avec la prod (commande ci-dessus), avec les secrets `AIRFLOW_*` de `.env.prod`.
 
-Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB de l'ERP, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0011).
+Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB des analystes, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0011).
 
 - Interface : <http://127.0.0.1:8080>, compte `admin` et mot de passe `AIRFLOW_ADMIN_PASSWORD`. Depuis un poste, par tunnel SSH.
 - Lancer un entraînement sans attendre la nuit : bouton *Trigger* du DAG, ou `docker compose -f docker-compose.prod.yml --env-file .env.prod exec airflow-scheduler airflow dags trigger retrain_express_model`.
@@ -274,6 +274,21 @@ Avant d'ouvrir une pull request, lancez ce que la CI vérifiera :
 ```powershell
 ruff check .
 pytest
+```
+
+Sans `TEST_MONGO_URL`, les tests sur un vrai MongoDB sont sautés : la collection factice couvre le même contrat. Pour les lancer comme la CI :
+
+```powershell
+docker run -d --rm --name mongo-test -p 127.0.0.1:27019:27017 mongo:8.3.13
+$env:TEST_MONGO_URL = "mongodb://localhost:27019/livraison_express_test"; pytest
+docker stop mongo-test
+```
+
+Pour vérifier le DAG Airflow comme la CI :
+
+```powershell
+docker build -t livraison-express-airflow:check airflow
+docker run --rm -v "${PWD}/airflow:/opt/airflow/check:ro" livraison-express-airflow:check python /opt/airflow/check/check_dag.py
 ```
 
 ## Pull requests

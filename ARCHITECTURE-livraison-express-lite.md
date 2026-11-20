@@ -317,7 +317,7 @@ Les interfaces de `domain/interface/` décrivent seulement les opérations dont 
 
 | Interface | Méthodes | Implémentation lite | Limite |
 |---|---|---|---|
-| `OrderRepositoryInterface` | `save()`, `get()`, `get_training_data()` | dictionnaire en mémoire ; collection MongoDB de l'ERP (ADR-0010) | en mémoire : données perdues au redémarrage et non partagées |
+| `OrderRepositoryInterface` | `save()`, `get()`, `get_training_data()` | dictionnaire en mémoire ; collection MongoDB des analystes (ADR-0010) | en mémoire : données perdues au redémarrage et non partagées |
 | `ModelRepositoryInterface` | `save()`, `load()` | fichier local via Joblib | pas de registre complet ni de rollback |
 | `ExperimentTrackerInterface` | `log_run()` | MLflow | — |
 
