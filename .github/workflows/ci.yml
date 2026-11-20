@@ -50,11 +50,13 @@ jobs:
   test:
     name: Tests (pytest)
     runs-on: ubuntu-24.04
-    # MongoDB jetable, même image que les composes : les tests de contrat du repository
-    # et du labelliseur tournent aussi sur une vraie base (ADR-0009).
+    # MongoDB jetable : les tests de contrat du repository et du labelliseur tournent
+    # aussi sur une vraie base (ADR-0009). Série 7.0 et non 8.x comme les composes :
+    # MongoDB 8.x refuse de démarrer sur le noyau Linux des runners (6.19 et plus,
+    # SERVER-121912). Les tests n'utilisent que des opérations identiques en 7.0.
     services:
       mongodb:
-        image: mongo:8.3.13@sha256:e16e606f792ea89d2b4907b54e5e31eb86a7a23e27231dce3a982cc8f2d73cd2
+        image: mongo:7.0.48@sha256:41e8195b2791692695e1dc9bd21cd51d0a3af05fff8ace9304a5c1acf94f1ae1
         ports:
           - 27017:27017
         options: >-
