@@ -4,7 +4,16 @@ Prédiction de l'éligibilité d'une commande à la livraison express.
 
 Une commande est décrite par sa distance, son poids, son montant, la météo, la zone de livraison, le type de client, etc. Un modèle scikit-learn (régression logistique) calcule une probabilité, puis un seuil la transforme en décision « oui » ou « non ». Le modèle est entraîné par une commande en ligne, puis servi par une API FastAPI.
 
-> **Version lite.** Les commandes sont générées en mémoire au démarrage (données synthétiques) et le modèle est un fichier local. Les évolutions prévues (base de données, registre MLflow, Docker, authentification) sont décrites dans [ADR.md](ADR.md).
+Ce qui est en place :
+
+| Brique | Mise en œuvre | Décision |
+|---|---|---|
+| Données d'entraînement | MongoDB des analystes, alimenté par l'ERP, lu en lecture seule. En dev : données synthétiques en mémoire ou MongoDB simulé | [ADR-0001](ADR.md), [ADR-0006](ADR.md), [ADR-0009](ADR.md) |
+| Entraînement | `python -m app train` : le nouveau modèle (challenger) remplace le modèle en service (champion) seulement s'il fait mieux sur les mêmes commandes récentes. Runs suivis dans MLflow | [ADR-0002](ADR.md), [ADR-0008](ADR.md) |
+| Orchestration | Airflow : réentraînement chaque nuit, s'il est arrivé assez de nouvelles commandes labellisées | [ADR-0010](ADR.md) |
+| Service | API FastAPI, canary du modèle à 90/10 (`CANARY_PERCENT`) | [ADR-0005](ADR.md) |
+| Déploiement | Docker Compose, un fichier par environnement (dev, test, prod), image de prod minimale | [ADR-0003](ADR.md), [ADR-0004](ADR.md) |
+| CI/CD | GitHub Actions : Ruff, pytest (avec un vrai MongoDB), chargement du DAG Airflow, publication de l'image sur GitHub Container Registry | [CONTRIBUTING.md](CONTRIBUTING.md#cicd) |
 
 ## Documentation
 
@@ -45,6 +54,9 @@ Copier `.env.example` en `.env`. Une clé laissée vide prend la valeur par déf
 | `MODEL_PATH` | `notebooks/artifacts/express_delivery_model.joblib` | Fichier du modèle écrit par `train` et lu par l'API |
 | `MODEL_THRESHOLD` | `0.5` | Seuil de probabilité au-delà duquel la commande est éligible |
 | `MODEL_VERSION` | `1.0.0` | Version renvoyée dans chaque prédiction |
+| `CANARY_PERCENT` | `0` | Part des commandes (0 à 100) prédite par le modèle canary (ADR-0005). `0` = canary désactivé |
+| `CANARY_MODEL_PATH` | `notebooks/artifacts/canary/express_delivery_model.joblib` | Fichier du modèle canary |
+| `CANARY_MODEL_VERSION` | `canary` | Version renvoyée par les prédictions du modèle canary |
 | `RANDOM_SEED` | `42` | Graine de la génération des données et de l'entraînement |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` ou `ERROR` |
 
@@ -70,6 +82,31 @@ mlflow ui --backend-store-uri ./mlruns
 ```
 
 Puis ouvrir http://127.0.0.1:5000.
+
+### Variables d'environnement Docker (GitHub Environments)
+
+Les fichiers `.env.dev`, `.env.test` et `.env.prod`, lus par `docker-compose.dev.yml`, `docker-compose.test.yml` et `docker-compose.prod.yml`, ne sont pas dans git. Leur contenu est stocké sur GitHub, dans les Environments `development`, `test` et `production` du dépôt (*Settings → Environments*).
+
+**Tout y est en _variables_, y compris les mots de passe, et c'est un choix volontaire.** GitHub ne laisse jamais relire un _secret_ (ni par l'interface, ni par l'API, ni par `gh`) : seul un workflow peut l'utiliser. Une _variable_, elle, se relit avec `gh`. C'est ce qui permet de recréer le `.env` de n'importe quel environnement, sur n'importe quel poste et depuis n'importe quelle branche, puis de simuler un déploiement avec l'image publiée sur ghcr.io, comme le ferait une CD. Avec des secrets, cette récupération serait impossible.
+
+Pour créer le `.env` d'un environnement, puis lancer l'image publiée :
+
+```powershell
+.\scripts\env.ps1 pull production  # GitHub Environment "production" -> .env.prod
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+Même chose avec `development` (→ `.env.dev`) ou `test` (→ `.env.test`). Pour modifier une valeur, changez-la sur GitHub puis relancez `pull`. Pour envoyer un fichier local complet : `.\scripts\env.ps1 push production`. Le script utilise `gh`, connecté avec un compte qui administre le dépôt.
+
+**Ce qui devrait être un secret** dans un vrai projet : ces valeurs donnent accès à des données ou à des comptes. Elles iraient en _secrets_ d'Environment, utilisés par un vrai déploiement (une CD qui écrit le `.env` sur le serveur), et ne seraient jamais relisibles.
+
+| Environment | Variables qui devraient être des secrets |
+|---|---|
+| `development` | aucune : pas de mot de passe, commandes en mémoire (`memory://`) |
+| `test` | `MONGO_ROOT_PASSWORD`, `MONGO_TRAINING_PASSWORD`, `MONGO_ETL_PASSWORD` |
+| `production` | `TRAINING_SOURCE_URL` (contient le mot de passe du compte MongoDB des analystes), `AIRFLOW_ADMIN_PASSWORD`, `AIRFLOW_DB_PASSWORD`, `AIRFLOW_FERNET_KEY`, `AIRFLOW_JWT_SECRET`, `AIRFLOW_API_SECRET_KEY` |
+
+Les autres valeurs (version de l'image, seuil du modèle, ports, planification…) ne sont pas sensibles : ce sont de vraies variables.
 
 ## Utilisation
 
@@ -238,7 +275,7 @@ L'essentiel de ce qui reste vient de `scipy`, `pandas`, `scikit-learn` et `numpy
 - **Image de base figée** par version exacte et empreinte (`python:3.13.18-slim@sha256:…`) : deux builds produisent la même image.
 - **Aucun secret** : `.env` est exclu par `.dockerignore`, aucun mot de passe dans `ENV`.
 
-**Au lancement (`docker-compose.yml`, `docker-compose.test.yml`, `docker-compose.prod.yml`), pour tous les services :**
+**Au lancement (`docker-compose.dev.yml`, `docker-compose.test.yml`, `docker-compose.prod.yml`), pour tous les services :**
 
 - **Système de fichiers en lecture seule** (`read_only`) : seuls le volume `/data` et `/tmp` sont modifiables.
 - **Aucune capacité Linux** (`cap_drop: ALL`) ; `init-volume` ne récupère que `CHOWN`.

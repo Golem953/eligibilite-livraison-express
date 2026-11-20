@@ -6,6 +6,7 @@ n'est écrit en dur dans le code métier. Les valeurs sont lues depuis l'environ
 ou depuis un fichier `.env` (voir `.env.example`), dans cet ordre de priorité.
 """
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,10 +38,15 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     # Version du modèle servi (provisoire, voir ADR-0002).
     model_version: str = "1.0.0"
-    # Source des commandes de l'entraînement (ADR-0010) : `memory://` (données
+    # Canary du modèle (ADR-0005) : part des commandes (0 à 100) prédite par le modèle de
+    # `canary_model_path` au lieu de celui de `model_path`. 0 = canary désactivé.
+    canary_percent: int = Field(default=0, ge=0, le=100)
+    canary_model_path: str = "notebooks/artifacts/canary/express_delivery_model.joblib"
+    canary_model_version: str = "canary"
+    # Source des commandes de l'entraînement (ADR-0009) : `memory://` (données
     # synthétiques) ou `mongodb://hôte:27017/livraison_express` (commandes de l'ERP).
     training_source_url: str = "memory://"
-    # Promotion (ADR-0011) : le nouveau modèle remplace le modèle en service seulement si
+    # Promotion (ADR-0010) : le nouveau modèle remplace le modèle en service seulement si
     # cette métrique, mesurée sur le même jeu de test, le dépasse d'au moins ce gain.
     promotion_metric: str = "f1_score"
     promotion_min_gain: float = 0.0

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from ..config import Settings
 from ..core.core import build_prediction_service
+from ..core.learning.canary_predict import CanaryPredict
 from ..core.learning.ml_predict import MLPredict
 from ..domain.entities.order_entity import OrderEntity
 from ..domain.entities.prediction_entity import PredictionEntity
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def create_app(
     settings: Settings | None = None,
-    predict_service: MLPredict | None = None,
+    predict_service: MLPredict | CanaryPredict | None = None,
 ) -> FastAPI:
     """Créer l'API.
 

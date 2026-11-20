@@ -3,7 +3,7 @@
 Elle déclare les opérations de base sur une commande (`save`, `get`) et l'extraction
 du jeu d'entraînement (`get_training_data`). Les implémentations sont dans
 `infrastructure/repository/` : en mémoire pour le dev et les tests, MongoDB pour les
-commandes de l'ERP (ADR-0010).
+commandes de l'ERP (ADR-0009).
 """
 
 from __future__ import annotations

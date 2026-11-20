@@ -1,14 +1,14 @@
-"""Réentraînement nocturne du modèle d'éligibilité express (ADR-0011).
+"""Réentraînement nocturne du modèle d'éligibilité express (ADR-0010).
 
 Chaque nuit :
 
-1. ``enough_new_orders`` compte les commandes labellisées du MongoDB de l'ERP. S'il en
+1. ``enough_new_orders`` compte les commandes labellisées du MongoDB des analystes. S'il en
    est arrivé moins de ``RETRAIN_MIN_NEW_ORDERS`` depuis le dernier entraînement, le
    DAG s'arrête là : les tâches suivantes sont sautées ;
 2. ``train`` lance l'image de prod de l'application (``python -m app train``) dans un
    conteneur, sur le volume du modèle de la prod. L'application compare elle-même le
    nouveau modèle au modèle en service, sur le même jeu de test, et ne remplace ce
-   dernier que si le nouveau est meilleur (ADR-0010) ;
+   dernier que si le nouveau est meilleur (ADR-0009) ;
 3. ``read_result`` lit le résultat, écrit en JSON sur la dernière ligne de ``train`` ;
 4. ``remember_order_count`` retient le nombre de commandes utilisées, pour le seuil de
    la nuit suivante, que le modèle ait été promu ou non ;
@@ -16,8 +16,8 @@ Chaque nuit :
    charge le modèle qu'au démarrage.
 
 Toute la configuration vient des variables d'environnement ``RETRAIN_*`` des conteneurs
-Airflow (voir ``.env.airflow.example``). Airflow ne parle à Docker qu'à travers un proxy
-qui limite les appels autorisés (``docker-proxy`` dans ``docker-compose.airflow.yml``).
+Airflow (voir ``.env.prod.example``). Airflow ne parle à Docker qu'à travers un proxy
+qui limite les appels autorisés (``docker-proxy`` dans ``docker-compose.prod.yml``).
 """
 
 from __future__ import annotations

@@ -50,6 +50,22 @@ jobs:
   test:
     name: Tests (pytest)
     runs-on: ubuntu-24.04
+    # MongoDB jetable : les tests de contrat du repository et du labelliseur tournent
+    # aussi sur une vraie base (ADR-0009). Série 7.0 et non 8.x comme les composes :
+    # MongoDB 8.x refuse de démarrer sur le noyau Linux des runners (6.19 et plus,
+    # SERVER-121912). Les tests n'utilisent que des opérations identiques en 7.0.
+    services:
+      mongodb:
+        image: mongo:7.0.48@sha256:41e8195b2791692695e1dc9bd21cd51d0a3af05fff8ace9304a5c1acf94f1ae1
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_MONGO_URL: mongodb://localhost:27017/livraison_express_test
     steps:
       - uses: actions/checkout@v4
 
@@ -67,10 +83,25 @@ jobs:
       - name: pytest
         run: pytest -v
 
+  dag:
+    name: DAG Airflow (chargement)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # L'image Airflow de la prod : le DAG est chargé avec les mêmes versions qu'en prod.
+      - name: Construire l'image Airflow
+        run: docker build -t livraison-express-airflow:ci airflow
+
+      - name: Charger le DAG
+        run: >-
+          docker run --rm -v "$PWD/airflow:/opt/airflow/check:ro" livraison-express-airflow:ci
+          python /opt/airflow/check/check_dag.py
+
   docker:
     name: Build de l'image prod
     runs-on: ubuntu-24.04
-    needs: [lint, test]
+    needs: [lint, test, dag]
     # Aucune image avant la release : seulement sur release/* et hotfix/* (push ou PR vers
     # main). Sur dev, les feat/* et dans la CD (qui construit elle-même), ce job est sauté.
     if: >-
