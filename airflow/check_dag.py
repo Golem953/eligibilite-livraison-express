@@ -1,4 +1,4 @@
-"""Vérifie que le DAG de réentraînement se charge dans Airflow (ADR-0011).
+"""Vérifie que le DAG de réentraînement se charge dans Airflow (ADR-0010).
 
 Lancé par la CI dans l'image Airflow du projet (airflow/Dockerfile), celle de la prod :
 

@@ -1,4 +1,4 @@
-"""ETL simulé (ADR-0010) : il joue un système externe, pas l'application.
+"""ETL simulé (ADR-0009) : il joue un système externe, pas l'application.
 
 L'ERP alimente le MongoDB des analystes avec ses commandes, mais sans leur label
 (`express_eligible`) : le résultat réel d'une livraison n'est connu qu'après coup.

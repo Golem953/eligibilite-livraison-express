@@ -7,7 +7,7 @@
 # Sur une branche release/<version> ou hotfix/<version> (voir CONTRIBUTING.md).
 # L'image de l'application est construite avec l'étape `test` du Dockerfile, identique
 # à `prod`. La base est un MongoDB de test, configuré comme celui de la prod :
-# authentification activée et un compte par usage (ADR-0009, ADR-0010). L'ETL simulé
+# authentification activée et un compte par usage (ADR-0007, ADR-0009). L'ETL simulé
 # l'alimente à la place de l'ETL de l'ERP, au format de l'ERP.
 #
 # Modèle des variables : .env.test.example. Les mots de passe n'ont pas de valeur par
@@ -82,7 +82,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Lancé à la demande, puis s'arrête (ADR-0007).
+  # Lancé à la demande, puis s'arrête (ADR-0008).
   train:
     <<: *app
     command: ["python", "-m", "app", "train"]
@@ -111,7 +111,7 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  # Base choisie par l'ADR-0010, configurée comme en prod. Aucun port publié :
+  # Base choisie par l'ADR-0009, configurée comme en prod. Aucun port publié :
   # seuls les services de ce compose y accèdent.
   mongodb:
     <<: *hardening

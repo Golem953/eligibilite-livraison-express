@@ -1,4 +1,4 @@
-"""ETL simulé, mode `label` : labellisation des commandes écrites par l'ERP (ADR-0010).
+"""ETL simulé, mode `label` : labellisation des commandes écrites par l'ERP (ADR-0009).
 
 L'ETL n'est pas un paquet de l'application : il est importé depuis son dossier.
 """

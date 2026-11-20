@@ -149,7 +149,7 @@ Le `Dockerfile` contient une étape par environnement, et chaque branche Git Flo
 
 Chaque environnement a **un seul** fichier Compose, `docker-compose.<environnement>.yml` (`dev`, `test`, `prod`), complet et autonome, et son fichier de variables `.env.<environnement>`, passé à Compose avec `--env-file`. Les réglages communs (durcissement, volume, healthcheck) sont recopiés dans chacun : une modification commune se fait dans les trois.
 
-| Moment | Branche | Compose | Variables | Image | Base MongoDB (ADR-0010) |
+| Moment | Branche | Compose | Variables | Image | Base MongoDB (ADR-0009) |
 |---|---|---|---|---|---|
 | Développement sur son poste | `feat/*`, `dev` | `docker-compose.dev.yml` | `.env.dev` | `livraison-express:dev`, construite : tout le dépôt, avec pytest et ruff | Aucune par défaut (`memory://`) ; MongoDB et ETL simulés avec le profil `etl` |
 | Pull request de `dev` vers une release, ou correctif urgent | `release/<version>`, `hotfix/<version>` | `docker-compose.test.yml` | `.env.test` | `livraison-express:test`, construite : identique à la prod | MongoDB de test, avec authentification, alimenté par l'ETL simulé |
@@ -196,7 +196,7 @@ $env:MONGO_PORT = "27117"; docker compose -f docker-compose.erp.yml up -d --buil
 
 Sur le même poste, `TRAINING_SOURCE_URL=mongodb://host.docker.internal:27117/livraison_express`. Sur un autre poste, remplacer `host.docker.internal` par l'adresse IP de la machine de l'ERP.
 
-L'ERP simulé écrit ses commandes **sans label** : le résultat réel d'une livraison n'est connu qu'après coup. Sans label, `train` n'a rien à apprendre. Le labelliseur simulé joue ce résultat réel : il ajoute `express_eligible` aux nouvelles commandes, en continu, avec la règle métier cachée du notebook (ADR-0010) :
+L'ERP simulé écrit ses commandes **sans label** : le résultat réel d'une livraison n'est connu qu'après coup. Sans label, `train` n'a rien à apprendre. Le labelliseur simulé joue ce résultat réel : il ajoute `express_eligible` aux nouvelles commandes, en continu, avec la règle métier cachée du notebook (ADR-0009) :
 
 ```powershell
 docker compose -f etl_simulator/docker-compose.labeler.yml up -d --build
@@ -210,7 +210,7 @@ Les étapes `test` et `prod` étant identiques, l'image validée en release est 
 
 Airflow fait partie de `docker-compose.prod.yml` : il démarre avec la prod (commande ci-dessus), avec les secrets `AIRFLOW_*` de `.env.prod`.
 
-Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB des analystes, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0011).
+Le DAG `retrain_express_model` (`airflow/dags/`) tourne chaque nuit à 2 h. Il ne réentraîne que si au moins `RETRAIN_MIN_NEW_ORDERS` nouvelles commandes labellisées sont arrivées dans le MongoDB des analystes, avec l'image de prod (`APP_VERSION`). `train` ne remplace le modèle en service que si le nouveau est meilleur sur le même jeu de test, et Airflow ne redémarre l'API que dans ce cas (ADR-0010).
 
 - Interface : <http://127.0.0.1:8080>, compte `admin` et mot de passe `AIRFLOW_ADMIN_PASSWORD`. Depuis un poste, par tunnel SSH.
 - Lancer un entraînement sans attendre la nuit : bouton *Trigger* du DAG, ou `docker compose -f docker-compose.prod.yml --env-file .env.prod exec airflow-scheduler airflow dags trigger retrain_express_model`.

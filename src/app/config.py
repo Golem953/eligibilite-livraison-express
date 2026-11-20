@@ -43,10 +43,10 @@ class Settings(BaseSettings):
     canary_percent: int = Field(default=0, ge=0, le=100)
     canary_model_path: str = "notebooks/artifacts/canary/express_delivery_model.joblib"
     canary_model_version: str = "canary"
-    # Source des commandes de l'entraînement (ADR-0010) : `memory://` (données
+    # Source des commandes de l'entraînement (ADR-0009) : `memory://` (données
     # synthétiques) ou `mongodb://hôte:27017/livraison_express` (commandes de l'ERP).
     training_source_url: str = "memory://"
-    # Promotion (ADR-0011) : le nouveau modèle remplace le modèle en service seulement si
+    # Promotion (ADR-0010) : le nouveau modèle remplace le modèle en service seulement si
     # cette métrique, mesurée sur le même jeu de test, le dépasse d'au moins ce gain.
     promotion_metric: str = "f1_score"
     promotion_min_gain: float = 0.0

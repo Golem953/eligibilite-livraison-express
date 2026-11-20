@@ -12,7 +12,7 @@ L'API expose `POST /predict` : elle reçoit une commande, renvoie une prédictio
 
 Au départ, le seul stockage de commandes est `InMemoryOrderRepository`, un dictionnaire Python rempli au démarrage de l'entraînement par le générateur synthétique. L'interface `OrderRepositoryInterface` (`domain/interface/`) déclare `save`, `get` et `get_training_data()`, et l'implémentation est choisie dans la racine de composition `core/core.py`.
 
-Les commandes réelles existent déjà ailleurs : l'ERP les envoie, avec leur label, dans le **MongoDB des analystes**. Ce MongoDB n'est pas une base de l'ERP : il en reçoit les données **dans un seul sens** (ERP → MongoDB), sans aucun lien retour (ADR-0010).
+Les commandes réelles existent déjà ailleurs : l'ERP les envoie, avec leur label, dans le **MongoDB des analystes**. Ce MongoDB n'est pas une base de l'ERP : il en reçoit les données **dans un seul sens** (ERP → MongoDB), sans aucun lien retour (ADR-0009).
 
 La question est donc : l'application a-t-elle besoin de **sa propre base** de commandes ? Deux besoins sont possibles :
 
@@ -35,11 +35,11 @@ La question est donc : l'application a-t-elle besoin de **sa propre base** de co
 Raisons :
 
 - **Les données existent déjà et sont alimentées en continu** : l'ERP écrit dans le MongoDB des analystes. Créer une autre base reviendrait à stocker les mêmes commandes deux fois.
-- **Le seul besoin retenu est l'entraînement** : on réentraîne avec les nouvelles données, on compare le nouveau modèle (challenger) au modèle en service (champion) sur les mêmes commandes récentes, et il ne devient champion que s'il fait mieux (ADR-0010, ADR-0011). Cette comparaison n'a besoin d'aucune trace des prédictions servies.
+- **Le seul besoin retenu est l'entraînement** : on réentraîne avec les nouvelles données, on compare le nouveau modèle (challenger) au modèle en service (champion) sur les mêmes commandes récentes, et il ne devient champion que s'il fait mieux (ADR-0009, ADR-0010). Cette comparaison n'a besoin d'aucune trace des prédictions servies.
 - **Aucun risque pour l'ERP** : le lien va dans un seul sens, de l'ERP vers MongoDB. Rien de ce que fait l'entraînement ne remonte vers l'ERP.
-- **L'accès est maîtrisé** : l'équipe obtient le compte administrateur de ce MongoDB par l'alternant qui le maintient, ou le reprend lors du transfert de compte à son départ. Elle crée ensuite un compte en lecture seule pour l'entraînement (ADR-0009).
+- **L'accès est maîtrisé** : l'équipe obtient le compte administrateur de ce MongoDB par l'alternant qui le maintient, ou le reprend lors du transfert de compte à son départ. Elle crée ensuite un compte en lecture seule pour l'entraînement (ADR-0007).
 
-**Par environnement** (`TRAINING_SOURCE_URL`, ADR-0010) :
+**Par environnement** (`TRAINING_SOURCE_URL`, ADR-0009) :
 
 | Environnement | Source des commandes |
 |---|---|
@@ -51,11 +51,11 @@ Raisons :
 ### Conséquences
 
 - **L'API reste sans état** : une prédiction n'existe que dans la réponse et dans les logs. On ne peut ni auditer une prédiction passée, ni mesurer la qualité du modèle sur le trafic réel.
-- **La qualité d'un modèle se juge avant sa mise en service**, sur le jeu de test tiré de MongoDB (ADR-0011). Pendant un canary (ADR-0005), la comparaison du stable et du canary se fait sur les logs de l'API.
+- **La qualité d'un modèle se juge avant sa mise en service**, sur le jeu de test tiré de MongoDB (ADR-0010). Pendant un canary (ADR-0005), la comparaison du stable et du canary se fait sur les logs de l'API.
 - **Deux implémentations de `OrderRepositoryInterface`** : `InMemoryOrderRepository` (dev, tests) et `MongoOrderRepository` (test, prod), choisies par `TRAINING_SOURCE_URL` dans `core/core.py`. Le métier ne dépend pas du moteur.
-- **Validation à la lecture** : MongoDB n'impose aucun schéma. `MongoOrderRepository` convertit chaque document en `OrderEntity` et écarte, en le comptant, tout document incomplet ou mal typé (ADR-0010).
+- **Validation à la lecture** : MongoDB n'impose aucun schéma. `MongoOrderRepository` convertit chaque document en `OrderEntity` et écarte, en le comptant, tout document incomplet ou mal typé (ADR-0009).
 - **Dépendance au MongoDB des analystes** : s'il est indisponible, l'entraînement échoue et le modèle en service reste en place. L'API, elle, n'en dépend pas.
-- **Aucun serveur de base de données pour l'application.** Le seul PostgreSQL du système est la base interne d'Airflow (ADR-0011), qui ne contient aucune donnée de l'application.
+- **Aucun serveur de base de données pour l'application.** Le seul PostgreSQL du système est la base interne d'Airflow (ADR-0010), qui ne contient aucune donnée de l'application.
 
 ### Points restant ouverts
 
@@ -103,7 +103,7 @@ Le modèle servi est un fichier. MLflow conserve à côté l'historique de tous 
 | | Modèle servi (lu par l'API) | Historique des entraînements (MLflow) |
 |---|---|---|
 | Contenu | `express_delivery_model.joblib`, avec `metrics.json` et `features.json` | Un run par entraînement : paramètres, métriques (y compris celles du modèle en service, `champion_*`) et une copie du modèle |
-| Écrit par | `train`, via `FileModelRepository`, **seulement si le nouveau modèle est promu** (ADR-0011) | `train`, via `MlflowTracker`, à **chaque** entraînement |
+| Écrit par | `train`, via `FileModelRepository`, **seulement si le nouveau modèle est promu** (ADR-0010) | `train`, via `MlflowTracker`, à **chaque** entraînement |
 | Emplacement avec Docker (dev, test, prod) | `/data/artifacts/` sur le volume `app_data` (`MODEL_PATH`) | `/data/mlruns` sur le même volume (`MLFLOW_TRACKING_URI`, stockage fichiers) |
 | Emplacement sans Docker | `notebooks/artifacts/` | Dossier `mlruns/` du répertoire courant |
 
@@ -119,11 +119,11 @@ Raisons :
 
 ### Conséquences
 
-- **Un seul volume à sauvegarder** : `app_data` contient le modèle servi et tout l'historique MLflow (ADR-0009). Il est lié à la machine hôte.
+- **Un seul volume à sauvegarder** : `app_data` contient le modèle servi et tout l'historique MLflow (ADR-0007). Il est lié à la machine hôte.
 - **Stockage fichiers de MLflow** : MLflow 3 le déprécie au profit d'une base. Il doit être autorisé explicitement (`MLFLOW_ALLOW_FILE_STORE=true` dans les composes).
 - **Version du modèle** : `model_version` vient encore de la configuration (`MODEL_VERSION`), pas du fichier. Deux modèles successifs peuvent donc porter la même version. Le lien fiable vers le modèle exact est le `run_id` MLflow, écrit dans les logs de `train` et dans son résultat JSON.
 - **Retour arrière manuel** : le fichier servi est écrasé à chaque promotion, mais chaque run MLflow garde une copie du modèle. Pour revenir en arrière, on recharge celle du run voulu (`mlflow.sklearn.load_model("runs:/<run_id>/model")`), on l'écrit à l'emplacement de `MODEL_PATH`, puis on redémarre l'API. Aucune commande ne l'automatise encore.
-- **Prise en compte d'un nouveau modèle** : l'API charge le modèle une seule fois, au démarrage. Un nouveau modèle est servi après `docker compose restart api`, que le DAG lance en prod (ADR-0011).
+- **Prise en compte d'un nouveau modèle** : l'API charge le modèle une seule fois, au démarrage. Un nouveau modèle est servi après `docker compose restart api`, que le DAG lance en prod (ADR-0010).
 - **Abandonné par rapport à la première version de cet ADR** : la base `mlflow` sur PostgreSQL, les utilisateurs `commandes_user` et `mlflow_user`, le serveur MLflow intermédiaire pour les fichiers des modèles, et les alias `champion` / `challenger`.
 
 ### Points restant ouverts
@@ -174,7 +174,7 @@ La plateforme doit :
 |---|---|---|---|---|
 | Dev (sur son poste, `feat/*`, `dev`) | `docker-compose.dev.yml` + `.env.dev` | Construite, étape `dev` (avec pytest et ruff) | En mémoire par défaut ; MongoDB et ETL simulés avec le profil `etl` | `mongodb`, `etl-simulator` (profil `etl`) |
 | Test (`release/*`, `hotfix/*`) | `docker-compose.test.yml` + `.env.test` | Construite, étape `test`, identique à `prod` | MongoDB de test avec authentification, alimenté par l'ETL simulé | `mongodb`, `etl-simulator` |
-| Prod (`main`) | `docker-compose.prod.yml` + `.env.prod` | Publiée sur GitHub Container Registry par la CD, choisie par `APP_VERSION` | MongoDB de l'ERP, externe, en lecture seule (ADR-0010) | Airflow et sa base, `docker-proxy` (ADR-0011) |
+| Prod (`main`) | `docker-compose.prod.yml` + `.env.prod` | Publiée sur GitHub Container Registry par la CD, choisie par `APP_VERSION` | MongoDB de l'ERP, externe, en lecture seule (ADR-0009) | Airflow et sa base, `docker-proxy` (ADR-0010) |
 
 - **Un fichier complet par environnement**, plutôt qu'un fichier unique avec des profils ou des surcharges : les environnements n'ont ni les mêmes services ni la même origine d'image. Chaque fichier se lit seul et montre exactement ce qui tourne.
 - **La même image de la validation à la prod** : l'étape `test` du `Dockerfile` est identique à `prod`. Ce qui a été validé sur une release est ce qui part en production.
@@ -183,15 +183,15 @@ La plateforme doit :
 
 ### Conséquences
 
-- **`Dockerfile` multi-étapes** (Python 3.13, comme `requires-python`) : `base` installe les dépendances d'exécution et le code ; `dev` y ajoute `requirements-dev.txt` et tout le dépôt ; `test` et `prod` retirent pip et tournent avec `appuser` (UID 1000). La commande par défaut est `serve`, et le service `train` lance `train` à la demande (ADR-0007).
+- **`Dockerfile` multi-étapes** (Python 3.13, comme `requires-python`) : `base` installe les dépendances d'exécution et le code ; `dev` y ajoute `requirements-dev.txt` et tout le dépôt ; `test` et `prod` retirent pip et tournent avec `appuser` (UID 1000). La commande par défaut est `serve`, et le service `train` lance `train` à la demande (ADR-0008).
 - **`.dockerignore`** : exclut `.env` et `.env.*`, `.git/`, `.venv/`, `notebooks/`, les modèles, les runs MLflow et l'ETL simulé.
 - **Réglages communs recopiés** dans les trois fichiers (durcissement, volume, healthcheck) : une modification commune se fait dans les trois. C'est le prix de fichiers lisibles seuls.
 - **Écoute réseau** : dans le conteneur, l'API écoute sur `0.0.0.0` (la CLI utilise `127.0.0.1` par défaut, ce qui la rendrait injoignable depuis l'hôte). Les ports ne sont publiés que sur `127.0.0.1` (ADR-0004).
 - **Dépendances séparées** : `requirements.txt` pour l'exécution, `requirements-dev.txt` pour le développement. Les images `test` et `prod` ne contiennent que l'exécution.
 - **Publication par la CD, déploiement manuel** : la fusion d'une release dans `main` construit l'image et la publie sur GitHub Container Registry, sans la déployer. Sur la machine de prod, on met à jour `APP_VERSION` dans `.env.prod`, puis on lance `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d`.
-- **Un reverse proxy (Caddy ou Traefik) s'ajoutera devant l'API sur le VPS**, pour HTTPS (ADR-0008).
+- **Un reverse proxy (Caddy ou Traefik) s'ajoutera devant l'API sur le VPS**, pour HTTPS (ADR-0007).
 - **Redémarrage automatique** : `restart: unless-stopped` sur chaque service permanent. Le service Docker doit démarrer avec la machine.
-- **Limite assumée : une seule machine est un point de défaillance unique.** Les sauvegardes des volumes deviennent indispensables (ADR-0009). Une fois l'application conteneurisée, un passage ultérieur à Kubernetes ou à un service managé reste possible sans réécrire le code.
+- **Limite assumée : une seule machine est un point de défaillance unique.** Les sauvegardes des volumes deviennent indispensables (ADR-0007). Une fois l'application conteneurisée, un passage ultérieur à Kubernetes ou à un service managé reste possible sans réécrire le code.
 
 ### Points restant ouverts
 
@@ -243,8 +243,8 @@ L'application ne tourne aujourd'hui que sur le poste du développeur. Il n'exist
 
 ### Conséquences
 
-- **En local, rien ne doit être joignable depuis le réseau.** Les ports publiés par le compose (API 8000, MLflow 5000, Airflow 8080) doivent n'écouter que sur la machine (`127.0.0.1:8000:8000`). Sinon, un portable connecté à un réseau Wi-Fi partagé les exposerait (ADR-0009). Hors Docker, `serve` écoute déjà sur `127.0.0.1` par défaut.
-- **Sur le VPS** : choisir un hébergeur européen (données hébergées dans l'Union européenne), durcir le serveur (ADR-0009) et réserver un nom de domaine pour le certificat HTTPS (ADR-0008).
+- **En local, rien ne doit être joignable depuis le réseau.** Les ports publiés par le compose (API 8000, MLflow 5000, Airflow 8080) doivent n'écouter que sur la machine (`127.0.0.1:8000:8000`). Sinon, un portable connecté à un réseau Wi-Fi partagé les exposerait (ADR-0007). Hors Docker, `serve` écoute déjà sur `127.0.0.1` par défaut.
+- **Sur le VPS** : choisir un hébergeur européen (données hébergées dans l'Union européenne), durcir le serveur (ADR-0007) et réserver un nom de domaine pour le certificat HTTPS (ADR-0007).
 - **Dimensionnement indicatif du VPS**, à vérifier une fois l'image construite : 2 vCPU et 4 Go de mémoire (l'entraînement scikit-learn charge les données en mémoire, et les dépendances incluent MLflow, pandas et pyarrow).
 - **Pas de garantie de disponibilité** : acceptable à ce stade du projet.
 
@@ -302,9 +302,9 @@ Une seule variable, `CANARY_PERCENT` (de 0 à 100, `0` par défaut), fixe la par
 
 - **Où se fait la répartition** : dans l'API, qui charge les deux modèles. Il n'y a pas besoin de reverse proxy, ce qui convient à une seule machine (ADR-0003).
 - **Affectation d'une commande** : le canary répond si `zlib.crc32(order_id.encode()) % 100 < CANARY_PERCENT`. Une même commande tombe donc toujours du même côté. On utilise `crc32` et non `hash()` de Python, car `hash()` change à chaque démarrage du processus.
-- **Par commande, pas encore par utilisateur** : l'API ne connaît pas ses clients tant que l'authentification n'est pas en place (ADR-0008). Ensuite, la même formule s'appliquera à l'identifiant du client (`sub` du jeton), pour qu'un client voie toujours la même version.
+- **Par commande, pas encore par utilisateur** : l'API ne connaît pas ses clients tant que l'authentification n'est pas en place (ADR-0007). Ensuite, la même formule s'appliquera à l'identifiant du client (`sub` du jeton), pour qu'un client voie toujours la même version.
 - **Changer d'étape** : modifier `CANARY_PERCENT` dans `.env.<environnement>` (et dans le GitHub Environment correspondant, ADR-0003), puis recréer l'API (`docker compose -f docker-compose.<environnement>.yml --env-file .env.<environnement> up -d api`). Il ne faut ni nouvelle image ni réentraînement. `docker compose restart api` ne suffit pas, car il garde les anciennes variables.
-- **Avant le canary, la qualité** : un nouveau modèle ne devient canary que s'il a un meilleur score que le stable sur le même jeu de test, tiré des données de l'ERP (ADR-0010, ADR-0011).
+- **Avant le canary, la qualité** : un nouveau modèle ne devient canary que s'il a un meilleur score que le stable sur le même jeu de test, tiré des données de l'ERP (ADR-0009, ADR-0010).
 - **Pendant le canary, le comportement réel** : sur ses commandes, le canary ne doit avoir ni plus d'erreurs ni plus de latence que le stable, et sa part de commandes éligibles ne doit pas s'écarter anormalement. **Le passage à 100 % est une décision manuelle**, prise après lecture des mesures.
 - **L'image de l'API**, elle, est remplacée en mode recreate (on change `APP_VERSION`, puis on lance `up -d`). Retour arrière : remettre l'`APP_VERSION` précédente, toujours disponible sur GitHub Container Registry. Un canary entre deux images demandera un reverse proxy, au passage sur le VPS.
 
@@ -320,7 +320,7 @@ Raisons :
 - **Cycle d'un modèle** :
   - `train` écrit le modèle promu à `CANARY_MODEL_PATH`, au lieu d'écraser le stable, et l'essai commence à 0 % ;
   - après la généralisation, le canary est copié à `MODEL_PATH`, et `CANARY_PERCENT` revient à 0. Il devient le stable du prochain essai ;
-  - le DAG de l'ADR-0011 sera adapté à ce fonctionnement.
+  - le DAG de l'ADR-0010 sera adapté à ce fonctionnement.
 - **Chaque prédiction indique le modèle qui a répondu** : la réponse porte sa version (`model_version`), et un log par requête donne l'`order_id`, la version, la latence et l'erreur éventuelle. Comme l'API n'enregistre pas ses prédictions (ADR-0001), ce sont ces logs qui servent à comparer les deux modèles.
 - **`order_id` toujours présent** : il est facultatif dans `OrderEntity`, donc l'API en génère un (`uuid4`) s'il est absent, et le renvoie dans la réponse.
 - **La répartition est assemblée par la racine de composition** (`core/core.py`), qui charge les deux modèles. Le métier ne lit jamais la configuration lui-même.
@@ -328,7 +328,7 @@ Raisons :
 - **Deux modèles en mémoire** pendant un essai : la consommation mémoire de l'API double pendant cette période.
 - **État de l'implémentation** :
   - **fait** : la répartition dans l'API (`CanaryPredict`, assemblé par `build_prediction_service`), les variables `CANARY_*` et le log par prédiction. Si `CANARY_PERCENT` > 0 mais qu'il n'y a pas de modèle canary, tout va au stable ;
-  - **reste à faire** : `train` et le DAG écrivent encore le modèle promu à `MODEL_PATH` (ADR-0011). En attendant, on dépose un canary en lançant `train` avec `MODEL_PATH` pointant vers `CANARY_MODEL_PATH`, sans comparaison avec le stable.
+  - **reste à faire** : `train` et le DAG écrivent encore le modèle promu à `MODEL_PATH` (ADR-0010). En attendant, on dépose un canary en lançant `train` avec `MODEL_PATH` pointant vers `CANARY_MODEL_PATH`, sans comparaison avec le stable.
 - **Limites assumées** :
   - avec peu de trafic, 10 % donnent peu de commandes, et l'essai doit durer assez longtemps pour être significatif ;
   - chaque changement de `CANARY_PERCENT` recrée l'API, ce qui la coupe quelques secondes.
@@ -339,7 +339,7 @@ Raisons :
 - **Durée minimale de l'essai**, ou nombre minimal de commandes servies par le canary.
 - **Palier intermédiaire** (par exemple 50 %) si un passage direct de 10 % à 100 % paraît trop brutal.
 - **Canary de l'image de l'API** par un reverse proxy, au passage sur le VPS.
-- **Affectation par client** une fois l'authentification en place (ADR-0008).
+- **Affectation par client** une fois l'authentification en place (ADR-0007).
 
 ---
 
@@ -355,12 +355,12 @@ L'ADR-0001 conclut que l'application n'a pas de base propre : ses seules donnée
 
 Ce qu'on sait :
 
-- **le MongoDB des analystes existe et est alimenté** : l'ERP y envoie ses commandes et leur label, dans un seul sens (ADR-0010) ;
+- **le MongoDB des analystes existe et est alimenté** : l'ERP y envoie ses commandes et leur label, dans un seul sens (ADR-0009) ;
 - **l'équipe peut en devenir administratrice** : l'alternant qui le maintient lui donne l'accès, ou lui transfère son compte à son départ ;
-- **le besoin est une lecture simple** : toutes les commandes labellisées, triées par date pour le jeu de test (ADR-0010). Aucune jointure, aucune mise à jour, aucune écriture par l'application ;
+- **le besoin est une lecture simple** : toutes les commandes labellisées, triées par date pour le jeu de test (ADR-0009). Aucune jointure, aucune mise à jour, aucune écriture par l'application ;
 - **le volume est petit** : quelques milliers de commandes, sur une machine (ADR-0003, ADR-0004).
 
-Cet ADR ne concerne pas les bases internes des outils : Airflow impose une base SQL pour ses métadonnées (ADR-0011), et MLflow stocke ses runs en fichiers (ADR-0002).
+Cet ADR ne concerne pas les bases internes des outils : Airflow impose une base SQL pour ses métadonnées (ADR-0010), et MLflow stocke ses runs en fichiers (ADR-0002).
 
 ### Options considérées
 
@@ -378,18 +378,18 @@ Cet ADR ne concerne pas les bases internes des outils : Airflow impose une base 
 
 Raisons :
 
-- **La base existe et le système est en place** : l'ERP l'alimente, l'ETL tourne, et `MongoOrderRepository` la lit déjà (ADR-0010). Une base relationnelle demanderait de copier ces commandes et de maintenir cette copie.
+- **La base existe et le système est en place** : l'ERP l'alimente, l'ETL tourne, et `MongoOrderRepository` la lit déjà (ADR-0009). Une base relationnelle demanderait de copier ces commandes et de maintenir cette copie.
 - **Nos besoins n'utilisent pas les atouts du relationnel** : l'application ne fait que lire des commandes labellisées. Sans prédictions stockées (ADR-0001), il n'y a ni jointure ni mise à jour transactionnelle à garantir.
 - **Isolée de l'ERP** : le lien va de l'ERP vers MongoDB, jamais dans l'autre sens. Lire cette base ne peut rien casser côté ERP.
-- **L'absence de schéma est compensée à la lecture** : chaque document est validé et converti en `OrderEntity`. Un document incomplet est écarté et compté, jamais utilisé en silence (ADR-0010).
+- **L'absence de schéma est compensée à la lecture** : chaque document est validé et converti en `OrderEntity`. Un document incomplet est écarté et compté, jamais utilisé en silence (ADR-0009).
 - **Un serveur de moins à exploiter** : pas de PostgreSQL applicatif à sécuriser, sauvegarder et mettre à jour.
 
 ### Conséquences
 
-- **Un seul moteur pour les données de l'application : MongoDB.** PostgreSQL n'existe dans le système que comme base interne d'Airflow (ADR-0011).
-- **Comptes MongoDB** (ADR-0009) : le compte administrateur, détenu par l'équipe après le transfert, sert uniquement à l'administration ; `training_reader`, en lecture seule, sert à l'entraînement.
+- **Un seul moteur pour les données de l'application : MongoDB.** PostgreSQL n'existe dans le système que comme base interne d'Airflow (ADR-0010).
+- **Comptes MongoDB** (ADR-0007) : le compte administrateur, détenu par l'équipe après le transfert, sert uniquement à l'administration ; `training_reader`, en lecture seule, sert à l'entraînement.
 - **Validation obligatoire à la lecture**, dans `MongoOrderRepository` uniquement.
-- **Sauvegardes** : vérifier celles des analystes, sinon un `mongodump` quotidien (ADR-0009, ADR-0010).
+- **Sauvegardes** : vérifier celles des analystes, sinon un `mongodump` quotidien (ADR-0007, ADR-0009).
 - **Model Registry de MLflow** : s'il remplace un jour le stockage fichiers (ADR-0002), il demandera une base SQL, car MLflow ne prend pas MongoDB.
 
 ### Points restant ouverts
@@ -399,7 +399,207 @@ Raisons :
 
 ---
 
-## ADR-0007 — Où et comment exécuter l'entraînement du modèle
+## ADR-0007 — Comment sécuriser les entrées, les sorties et l'accès à la donnée
+
+**Status :** Accepté
+**Date :** 26/10/2026
+**Révision :** 20/11/2026. Fusion des deux ADR qui traitaient ces sujets séparément (entrées et sorties de l'API, accès aux données), pour suivre la numérotation du cours. Comptes et sauvegardes portés sur MongoDB : l'application n'a pas de base PostgreSQL (ADR-0001, ADR-0006).
+
+Cet ADR couvre deux surfaces, traitées l'une après l'autre dans chaque partie :
+
+- **les entrées et les sorties de l'API** : qui peut l'appeler, ce qu'elle accepte, ce qu'elle renvoie ;
+- **l'accès aux données** : comptes de la base, modèle, MLflow, secrets et sauvegardes.
+
+### Contexte
+
+#### Entrées et sorties de l'API
+
+L'API expose `GET /health`, `GET /health/ready` et `POST /predict`, **sans authentification**. Elle écoute par défaut sur `127.0.0.1` : elle n'est donc pas joignable depuis le réseau pour l'instant, mais elle devra l'être depuis Internet.
+
+État des entrées et des sorties :
+
+- **Validation partielle** : le corps de `/predict` est la dataclass du domaine `OrderEntity`. FastAPI vérifie les types, mais pas les bornes (une heure à 42 est acceptée) ni les valeurs des catégories, et il ignore silencieusement les champs en trop.
+- **Erreurs** : aucun format d'erreur commun. Un modèle absent donne une réponse 503 avec `detail`, et une erreur inattendue donne la réponse 500 par défaut de FastAPI.
+- **Sorties** : `/predict` déclare un `response_model`, qui limite la réponse aux champs de `PredictionEntity`.
+- **Aucune limite** de débit ni de taille de requête, aucun HTTPS. La documentation `/docs` est publique.
+- **Aucun test** de l'API : le projet n'a pas de dossier `tests/`.
+
+Une fois l'API exposée, les risques sont :
+
+- **appels non autorisés** : n'importe qui pourrait demander des prédictions ou envoyer de fausses commandes ;
+- **données invalides ou malveillantes** : variables manquantes, valeurs hors limites, champs inattendus ;
+- **saturation** : requêtes volumineuses, rafales de requêtes ;
+- **fuite d'informations** par les messages d'erreur (traces, détails internes) ;
+- **interception** des échanges sur le réseau.
+
+#### Accès aux données
+
+Données manipulées aujourd'hui par l'application :
+
+- **les commandes** : générées au démarrage et gardées en mémoire. Rien n'est écrit sur disque ;
+- **le modèle** : `express_delivery_model.joblib`, avec `metrics.json` et `features.json`, dans `notebooks/artifacts/`. Un `.joblib` est un pickle : le charger exécute le code qu'il contient. Quiconque peut écrire dans ce dossier peut donc faire exécuter du code par l'API ;
+- **les runs MLflow** : fichiers locaux sur le poste qui lance l'entraînement, sans authentification ;
+- **la configuration** : fichier `.env`, exclu de git par `.gitignore`. `.env.example` ne contient aucune valeur. L'application n'utilise encore aucun secret (ni mot de passe de base, ni clé d'API).
+
+Aucune sauvegarde n'existe. Les commandes ne contiennent aucune donnée personnelle : le RGPD ne s'applique pas aujourd'hui.
+
+Les risques vont augmenter dès que l'application stockera des données durablement, utilisera des secrets ou sera joignable depuis le réseau. Les règles d'accès doivent être fixées avant ces évolutions, pas après.
+
+### Options considérées
+
+#### Entrées et sorties de l'API
+
+Pour contrôler qui appelle l'API :
+
+| Option | Avantage | Inconvénient |
+|---|---|---|
+| A. Aucune authentification, API joignable seulement depuis un réseau privé (situation actuelle) | Rien à gérer | Inapplicable dès que l'API est sur Internet (VPS) |
+| B. Clé d'API dans un en-tête (`X-API-Key`) + HTTPS | Simple, adapté aux appels de machine à machine. Une clé par client, révocable | Clé statique : à protéger et à renouveler. Pas de droits fins |
+| C. OAuth2 / JWT + HTTPS | Jetons à durée limitée, droits par périmètre (scopes), révocation centralisée | Il faut un fournisseur d'identité à mettre en place et à exploiter. Plus complexe à tester en local |
+| D. Certificats clients (mTLS) | Authentification très forte | Gestion d'une autorité de certification et des certificats de chaque client |
+
+#### Accès aux données
+
+Pour les droits d'accès à la base :
+
+| Option | Avantage | Inconvénient |
+|---|---|---|
+| A. Un seul compte administrateur partagé, ou aucune authentification (comportement par défaut de l'image MongoDB) | Simple | Une fuite du mot de passe donne tous les droits : suppression des tables, création de comptes |
+| B. Des comptes séparés, chacun avec le minimum de droits | Chaque service n'a que les droits utiles : une fuite a un impact limité | Comptes et droits à créer par un script d'initialisation |
+| C. Accès par identité cloud (IAM) avec un service managé | Pas de mot de passe statique | Nécessite le cloud, écarté par l'ADR-0004 |
+
+### Décision
+
+#### Entrées et sorties de l'API
+
+**L'authentification dépend de l'environnement :**
+
+| Environnement | Authentification | Quand |
+|---|---|---|
+| Dev | **Option B** : clé d'API dans l'en-tête `X-API-Key` | dès maintenant |
+| Prod | **Option C** : OAuth2 / JWT, jetons émis par un fournisseur d'identité | plus tard, au passage en prod exposée sur Internet. D'ici là, la prod locale (ADR-0004) utilise aussi la clé d'API |
+
+- **En dev, une clé d'API** : simple à mettre en place, aucun service supplémentaire, facile à utiliser dans les tests et avec `curl`.
+- **En prod, OAuth2 / JWT** : jetons à durée limitée (une fuite n'a d'effet que jusqu'à l'expiration du jeton), droits par périmètre, gestion des clients centralisée chez le fournisseur d'identité.
+- **Le mode est choisi par configuration** (`AUTH_MODE=api_key` ou `oauth2`), dans la racine de composition. Les routes ne dépendent que d'une dépendance FastAPI d'authentification, qui ne change pas de nom d'un mode à l'autre. Passer de B à C ne modifie donc pas les routes.
+- **HTTPS** dans les deux cas dès que l'API sort de `127.0.0.1`.
+
+Ces choix s'accompagnent des mesures suivantes sur les entrées et les sorties.
+
+**Entrées**
+
+- **Clé d'API (dev)** : obligatoire sur toutes les routes métier (`/predict` et les suivantes), via l'en-tête `X-API-Key`. Elle est comparée en temps constant (`secrets.compare_digest`) aux clés autorisées. Une clé absente ou inconnue donne une réponse 401 sans détail.
+- **Jeton OAuth2 (prod)** : obligatoire sur les mêmes routes, via l'en-tête `Authorization: Bearer <jeton>`. L'API vérifie la signature du jeton avec les clés publiques du fournisseur d'identité (JWKS), ainsi que l'émetteur (`iss`), l'audience (`aud`), l'expiration (`exp`) et le périmètre requis (par exemple `predict`). Jeton absent, invalide ou expiré : 401. Périmètre insuffisant : 403. Les clients sont des machines, donc le flux OAuth2 utilisé est `client_credentials`.
+- **Routes publiques** : `/health` et `/health/ready` restent sans authentification dans les deux modes, car Docker et le reverse proxy s'en servent pour vérifier l'état du service.
+- **HTTPS** : sur le VPS, le reverse proxy (Caddy ou Traefik, ADR-0003) porte le certificat (Let's Encrypt) et redirige HTTP vers HTTPS. Le port de l'API n'est plus publié directement : seul le proxy est joignable. En local, HTTP sur `127.0.0.1` reste acceptable.
+- **Validation stricte** :
+  - un schéma Pydantic dédié à l'API, distinct de l'entité du domaine `OrderEntity`, qui reste une dataclass sans dépendance à FastAPI ;
+  - variable manquante ou en trop : erreur 422 (`extra="forbid"`) ;
+  - bornes contrôlées (`hour` entre 0 et 23, `day_of_week` entre 0 et 6, `weekend` et `stock_available` dans {0, 1}, distances, poids et montants positifs, `carrier_capacity` entre 0 et 1) ;
+  - valeurs énumérées contrôlées (`weather`, `delivery_zone`, `customer_type`), sur les modalités connues du générateur ;
+  - si une route par lot est ajoutée, elle est limitée à 1000 commandes ;
+  - contraintes `CHECK` en base en seconde barrière (ADR-0001).
+- **Limitation du débit** : nombre de requêtes par minute et taille maximale des requêtes, appliqués par le reverse proxy.
+
+**Sorties**
+
+- **Erreurs sans détail interne** : un format d'erreur unique (`code`, `message`). Un gestionnaire d'exceptions global transforme toute erreur inattendue en `internal_error` avec un message générique. La trace ne va que dans les logs du serveur.
+- **Réponses limitées aux champs du contrat** : `response_model` (déjà utilisé sur `/predict`) filtre tout champ en trop.
+- **Logs sans contenu sensible** : les logs d'accès n'enregistrent pas le corps des requêtes, ni jamais la clé d'API ou le jeton. Ils peuvent enregistrer l'identifiant du client (`sub` du jeton, ou nom associé à la clé). Les commandes ne contiennent aucune donnée personnelle.
+- **Pas de CORS** : aucune interface web n'appelle l'API, donc aucun site tiers ne peut l'appeler depuis un navigateur.
+
+#### Accès aux données
+
+**Les droits d'accès à la base dépendent de l'environnement :**
+
+| Environnement | Droits d'accès | Pourquoi |
+|---|---|---|
+| Dev | **Option A** : MongoDB de dev sans authentification | Données synthétiques et jetables, base accessible uniquement depuis le poste. Aucun script de droits à maintenir pour démarrer |
+| Test | **Option B** : comptes séparés, comme en prod (`docker/mongo/init-users.js`) | Les erreurs de droits (l'API qui tente de créer une table, l'entraînement qui tente d'écrire) doivent être détectées avant la prod |
+| Prod | **Option B** : comptes séparés, chacun avec le minimum de droits | Une fuite de mot de passe n'a qu'un impact limité |
+
+En dev, les commandes sont en mémoire par défaut (ADR-0001) : l'option A ne concerne que le MongoDB du profil `etl` de `docker-compose.dev.yml`, lancé pour tester le cycle complet.
+
+**En dev, l'option A est encadrée** :
+
+- la base n'écoute que sur `127.0.0.1` ;
+- elle ne contient que des données synthétiques, jamais une copie des données de prod ;
+- son mot de passe est propre au dev et n'est jamais réutilisé en CI ni en prod.
+
+**En test et en prod, l'option B est complétée par l'isolement réseau, la gestion des secrets, la protection des artéfacts et des sauvegardes.**
+
+- **Moindre privilège dans MongoDB** (l'API n'a aucun accès à une base, ADR-0001) :
+
+  | Compte | Droits | Utilisé par |
+  |---|---|---|
+  | administrateur | tous | administration uniquement. En prod, le compte que l'alternant transmet à l'équipe |
+  | `training_reader` | lecture seule (`read`) sur `livraison_express` | la commande `train` (l'entraînement ne fait que lire) |
+  | `etl_writer` | lecture et écriture (`readWrite`) sur `livraison_express` | l'ETL simulé, en test uniquement. En prod, c'est l'ERP qui écrit |
+
+- **Isolement réseau** :
+  - MongoDB et MLflow ne sont pas joignables depuis l'extérieur. Leurs ports ne sont publiés que sur `127.0.0.1`, et les commandes lancées depuis un poste passent par un tunnel SSH ;
+  - pare-feu du VPS : seuls SSH (22), HTTP (80) et HTTPS (443) sont ouverts ;
+  - connexion SSH par clé uniquement, sans mot de passe.
+- **MLflow** : interface et API réservées à l'équipe, par tunnel SSH. Si une exposition devient nécessaire : authentification intégrée de MLflow (`mlflow server --app-name basic-auth`) derrière HTTPS.
+- **Artéfacts du modèle** :
+  - l'API ne charge un modèle que depuis le registre MLflow (ADR-0002) ou un dossier en lecture seule pour elle ;
+  - le format `skops`, déjà utilisé par `MLTrainer` pour MLflow (`skops_trusted_types`), est préféré au pickle, car il n'exécute pas de code arbitraire au chargement.
+- **Secrets** :
+  - `.env` jamais versionné (déjà exclu par `.gitignore`) ni copié dans les images (`.dockerignore` à créer, ADR-0003) ;
+  - sur le VPS, fichier lisible par son seul propriétaire (`chmod 600`) ;
+  - mots de passe différents par environnement, changés en cas de fuite.
+- **Chiffrement en transit** : HTTPS pour l'API (partie « Entrées et sorties de l'API »). Les échanges avec MongoDB et MLflow restent sur le réseau Docker interne de la machine, ou passent par le tunnel SSH.
+- **Sauvegardes** : celles du MongoDB des analystes, à vérifier (sinon un `mongodump` quotidien), l'export de la base d'Airflow (`pg_dump`) et l'archive du volume `app_data` (modèle et runs MLflow), stockés hors du VPS, avec un test de restauration régulier.
+- **Génération de données synthétiques** : interdite quand `APP_ENV=prod`, ou soumise à une confirmation explicite.
+
+### Conséquences
+
+#### Entrées et sorties de l'API
+
+- **À implémenter maintenant (dev)** :
+  - une dépendance FastAPI (`Depends`) d'authentification sur les routes métier, avec l'implémentation par clé d'API ;
+  - les variables `AUTH_MODE` (défaut `api_key`) et `API_KEYS` dans `config.py`, `.env` et `.env.example` ;
+  - le schéma Pydantic d'entrée et sa conversion vers `OrderEntity` ;
+  - le gestionnaire d'erreurs global ;
+  - des tests des réponses 401 et 422 (le projet n'a pas encore de dossier `tests/`).
+- **À implémenter plus tard (prod)** :
+  - l'implémentation OAuth2 de la même dépendance : vérification du jeton (par exemple avec PyJWT et le JWKS du fournisseur) ;
+  - les variables `OAUTH2_ISSUER`, `OAUTH2_AUDIENCE` et l'URL du JWKS ;
+  - l'enregistrement de chaque client chez le fournisseur d'identité, avec son périmètre ;
+  - des tests des réponses 401 et 403 avec des jetons signés par une clé de test ;
+  - le service reverse proxy dans le compose, pour HTTPS sur le VPS.
+- **Garde-fou** : au démarrage, l'API refuse `AUTH_MODE=api_key` quand `APP_ENV=prod`, une fois le passage à OAuth2 effectué. La clé d'API ne peut donc pas rester active en prod par oubli.
+- **Un service de plus en prod** : le fournisseur d'identité (auto-hébergé comme Keycloak, ou externe) doit être disponible pour que les clients obtiennent un jeton. L'API, elle, ne l'appelle pas à chaque requête : elle garde en cache les clés publiques du JWKS.
+- **Versionnage de l'API** : les routes métier passent sous un préfixe `/v1` (`/v1/predict`) avant la mise en ligne, pour pouvoir faire évoluer le contrat sans casser les clients.
+- **Documentation client** : l'en-tête `X-API-Key` (dev) puis `Authorization: Bearer` (prod) est documenté dans le README et dans le schéma OpenAPI généré par FastAPI (schémas de sécurité `apiKey`, puis `oauth2`).
+- **Secrets** : les clés d'API et le secret client OAuth2 ne sont jamais dans le dépôt ni dans les images. Ils sont gérés comme les mots de passe de la base (partie « Accès aux données »).
+
+#### Accès aux données
+
+- **Trois configurations à maintenir** : en dev, MongoDB sans authentification ; en test, `docker/mongo/init-users.js` crée les comptes séparés ; en prod, l'équipe les crée avec le compte administrateur. Le code ne fait pas la différence : il reçoit simplement une URL de connexion différente (`TRAINING_SOURCE_URL`).
+- **Les erreurs de droits n'apparaissent pas en dev** : sans authentification, tout est permis. C'est l'environnement de test, configuré comme la prod, qui les détecte.
+- **À implémenter**, au moment de la mise en place de la base et de MLflow :
+  - les comptes MongoDB de prod, créés par l'équipe une fois le compte administrateur obtenu (en test, `init-users.js` le fait déjà) ;
+  - les ports liés à `127.0.0.1` dans le compose ;
+  - le chargement du modèle en `skops` dans `MlflowModelRepository` ;
+  - le garde-fou de la génération de données ;
+  - le script de sauvegarde.
+- **Si des données réelles sont utilisées un jour** : application du RGPD (minimisation des données, durée de conservation, registre des traitements).
+
+### Points restant ouverts
+
+- **Fournisseur d'identité** pour la prod : auto-hébergé (Keycloak) ou service externe (Auth0, Entra ID…) ?
+- **Moment de la bascule** vers OAuth2, à lier au passage sur le VPS (ADR-0004).
+- **Durée de vie des jetons** et **périmètres** à définir (par exemple `predict`, `model:read`).
+- **Documentation `/docs` en prod** : publique, protégée, ou désactivée ?
+- **Renouvellement des clés d'API** en dev : fréquence et procédure.
+- **Emplacement des sauvegardes** hors du VPS.
+- **Chiffrement du disque** du VPS.
+- **Fréquence de renouvellement** des mots de passe.
+
+---
+
+## ADR-0008 — Où et comment exécuter l'entraînement du modèle
 
 **Status :** Accepté
 **Date :** 26/10/2026
@@ -450,204 +650,7 @@ L'entraînement doit :
 
 ---
 
-## ADR-0008 — Comment sécuriser les entrées et les sorties de l'API
-
-**Status :** Accepté
-**Date :** 26/10/2026
-
-### Contexte
-
-L'API expose `GET /health`, `GET /health/ready` et `POST /predict`, **sans authentification**. Elle écoute par défaut sur `127.0.0.1` : elle n'est donc pas joignable depuis le réseau pour l'instant, mais elle devra l'être depuis Internet.
-
-État des entrées et des sorties :
-
-- **Validation partielle** : le corps de `/predict` est la dataclass du domaine `OrderEntity`. FastAPI vérifie les types, mais pas les bornes (une heure à 42 est acceptée) ni les valeurs des catégories, et il ignore silencieusement les champs en trop.
-- **Erreurs** : aucun format d'erreur commun. Un modèle absent donne une réponse 503 avec `detail`, et une erreur inattendue donne la réponse 500 par défaut de FastAPI.
-- **Sorties** : `/predict` déclare un `response_model`, qui limite la réponse aux champs de `PredictionEntity`.
-- **Aucune limite** de débit ni de taille de requête, aucun HTTPS. La documentation `/docs` est publique.
-- **Aucun test** de l'API : le projet n'a pas de dossier `tests/`.
-
-Une fois l'API exposée, les risques sont :
-
-- **appels non autorisés** : n'importe qui pourrait demander des prédictions ou envoyer de fausses commandes ;
-- **données invalides ou malveillantes** : variables manquantes, valeurs hors limites, champs inattendus ;
-- **saturation** : requêtes volumineuses, rafales de requêtes ;
-- **fuite d'informations** par les messages d'erreur (traces, détails internes) ;
-- **interception** des échanges sur le réseau.
-
-### Options considérées
-
-Pour contrôler qui appelle l'API :
-
-| Option | Avantage | Inconvénient |
-|---|---|---|
-| A. Aucune authentification, API joignable seulement depuis un réseau privé (situation actuelle) | Rien à gérer | Inapplicable dès que l'API est sur Internet (VPS) |
-| B. Clé d'API dans un en-tête (`X-API-Key`) + HTTPS | Simple, adapté aux appels de machine à machine. Une clé par client, révocable | Clé statique : à protéger et à renouveler. Pas de droits fins |
-| C. OAuth2 / JWT + HTTPS | Jetons à durée limitée, droits par périmètre (scopes), révocation centralisée | Il faut un fournisseur d'identité à mettre en place et à exploiter. Plus complexe à tester en local |
-| D. Certificats clients (mTLS) | Authentification très forte | Gestion d'une autorité de certification et des certificats de chaque client |
-
-### Décision
-
-**L'authentification dépend de l'environnement :**
-
-| Environnement | Authentification | Quand |
-|---|---|---|
-| Dev | **Option B** : clé d'API dans l'en-tête `X-API-Key` | dès maintenant |
-| Prod | **Option C** : OAuth2 / JWT, jetons émis par un fournisseur d'identité | plus tard, au passage en prod exposée sur Internet. D'ici là, la prod locale (ADR-0004) utilise aussi la clé d'API |
-
-- **En dev, une clé d'API** : simple à mettre en place, aucun service supplémentaire, facile à utiliser dans les tests et avec `curl`.
-- **En prod, OAuth2 / JWT** : jetons à durée limitée (une fuite n'a d'effet que jusqu'à l'expiration du jeton), droits par périmètre, gestion des clients centralisée chez le fournisseur d'identité.
-- **Le mode est choisi par configuration** (`AUTH_MODE=api_key` ou `oauth2`), dans la racine de composition. Les routes ne dépendent que d'une dépendance FastAPI d'authentification, qui ne change pas de nom d'un mode à l'autre. Passer de B à C ne modifie donc pas les routes.
-- **HTTPS** dans les deux cas dès que l'API sort de `127.0.0.1`.
-
-Ces choix s'accompagnent des mesures suivantes sur les entrées et les sorties.
-
-**Entrées**
-
-- **Clé d'API (dev)** : obligatoire sur toutes les routes métier (`/predict` et les suivantes), via l'en-tête `X-API-Key`. Elle est comparée en temps constant (`secrets.compare_digest`) aux clés autorisées. Une clé absente ou inconnue donne une réponse 401 sans détail.
-- **Jeton OAuth2 (prod)** : obligatoire sur les mêmes routes, via l'en-tête `Authorization: Bearer <jeton>`. L'API vérifie la signature du jeton avec les clés publiques du fournisseur d'identité (JWKS), ainsi que l'émetteur (`iss`), l'audience (`aud`), l'expiration (`exp`) et le périmètre requis (par exemple `predict`). Jeton absent, invalide ou expiré : 401. Périmètre insuffisant : 403. Les clients sont des machines, donc le flux OAuth2 utilisé est `client_credentials`.
-- **Routes publiques** : `/health` et `/health/ready` restent sans authentification dans les deux modes, car Docker et le reverse proxy s'en servent pour vérifier l'état du service.
-- **HTTPS** : sur le VPS, le reverse proxy (Caddy ou Traefik, ADR-0003) porte le certificat (Let's Encrypt) et redirige HTTP vers HTTPS. Le port de l'API n'est plus publié directement : seul le proxy est joignable. En local, HTTP sur `127.0.0.1` reste acceptable.
-- **Validation stricte** :
-  - un schéma Pydantic dédié à l'API, distinct de l'entité du domaine `OrderEntity`, qui reste une dataclass sans dépendance à FastAPI ;
-  - variable manquante ou en trop : erreur 422 (`extra="forbid"`) ;
-  - bornes contrôlées (`hour` entre 0 et 23, `day_of_week` entre 0 et 6, `weekend` et `stock_available` dans {0, 1}, distances, poids et montants positifs, `carrier_capacity` entre 0 et 1) ;
-  - valeurs énumérées contrôlées (`weather`, `delivery_zone`, `customer_type`), sur les modalités connues du générateur ;
-  - si une route par lot est ajoutée, elle est limitée à 1000 commandes ;
-  - contraintes `CHECK` en base en seconde barrière (ADR-0001).
-- **Limitation du débit** : nombre de requêtes par minute et taille maximale des requêtes, appliqués par le reverse proxy.
-
-**Sorties**
-
-- **Erreurs sans détail interne** : un format d'erreur unique (`code`, `message`). Un gestionnaire d'exceptions global transforme toute erreur inattendue en `internal_error` avec un message générique. La trace ne va que dans les logs du serveur.
-- **Réponses limitées aux champs du contrat** : `response_model` (déjà utilisé sur `/predict`) filtre tout champ en trop.
-- **Logs sans contenu sensible** : les logs d'accès n'enregistrent pas le corps des requêtes, ni jamais la clé d'API ou le jeton. Ils peuvent enregistrer l'identifiant du client (`sub` du jeton, ou nom associé à la clé). Les commandes ne contiennent aucune donnée personnelle.
-- **Pas de CORS** : aucune interface web n'appelle l'API, donc aucun site tiers ne peut l'appeler depuis un navigateur.
-
-### Conséquences
-
-- **À implémenter maintenant (dev)** :
-  - une dépendance FastAPI (`Depends`) d'authentification sur les routes métier, avec l'implémentation par clé d'API ;
-  - les variables `AUTH_MODE` (défaut `api_key`) et `API_KEYS` dans `config.py`, `.env` et `.env.example` ;
-  - le schéma Pydantic d'entrée et sa conversion vers `OrderEntity` ;
-  - le gestionnaire d'erreurs global ;
-  - des tests des réponses 401 et 422 (le projet n'a pas encore de dossier `tests/`).
-- **À implémenter plus tard (prod)** :
-  - l'implémentation OAuth2 de la même dépendance : vérification du jeton (par exemple avec PyJWT et le JWKS du fournisseur) ;
-  - les variables `OAUTH2_ISSUER`, `OAUTH2_AUDIENCE` et l'URL du JWKS ;
-  - l'enregistrement de chaque client chez le fournisseur d'identité, avec son périmètre ;
-  - des tests des réponses 401 et 403 avec des jetons signés par une clé de test ;
-  - le service reverse proxy dans le compose, pour HTTPS sur le VPS.
-- **Garde-fou** : au démarrage, l'API refuse `AUTH_MODE=api_key` quand `APP_ENV=prod`, une fois le passage à OAuth2 effectué. La clé d'API ne peut donc pas rester active en prod par oubli.
-- **Un service de plus en prod** : le fournisseur d'identité (auto-hébergé comme Keycloak, ou externe) doit être disponible pour que les clients obtiennent un jeton. L'API, elle, ne l'appelle pas à chaque requête : elle garde en cache les clés publiques du JWKS.
-- **Versionnage de l'API** : les routes métier passent sous un préfixe `/v1` (`/v1/predict`) avant la mise en ligne, pour pouvoir faire évoluer le contrat sans casser les clients.
-- **Documentation client** : l'en-tête `X-API-Key` (dev) puis `Authorization: Bearer` (prod) est documenté dans le README et dans le schéma OpenAPI généré par FastAPI (schémas de sécurité `apiKey`, puis `oauth2`).
-- **Secrets** : les clés d'API et le secret client OAuth2 ne sont jamais dans le dépôt ni dans les images. Ils sont gérés comme les mots de passe de la base (ADR-0009).
-
-### Points restant ouverts
-
-- **Fournisseur d'identité** pour la prod : auto-hébergé (Keycloak) ou service externe (Auth0, Entra ID…) ?
-- **Moment de la bascule** vers OAuth2, à lier au passage sur le VPS (ADR-0004).
-- **Durée de vie des jetons** et **périmètres** à définir (par exemple `predict`, `model:read`).
-- **Documentation `/docs` en prod** : publique, protégée, ou désactivée ?
-- **Renouvellement des clés d'API** en dev : fréquence et procédure.
-
----
-
-## ADR-0009 — Comment sécuriser l'accès aux données
-
-**Status :** Accepté
-**Date :** 26/10/2026
-**Révision :** 20/11/2026. Comptes et sauvegardes portés sur MongoDB : l'application n'a pas de base PostgreSQL (ADR-0001, ADR-0006).
-
-### Contexte
-
-Données manipulées aujourd'hui par l'application :
-
-- **les commandes** : générées au démarrage et gardées en mémoire. Rien n'est écrit sur disque ;
-- **le modèle** : `express_delivery_model.joblib`, avec `metrics.json` et `features.json`, dans `notebooks/artifacts/`. Un `.joblib` est un pickle : le charger exécute le code qu'il contient. Quiconque peut écrire dans ce dossier peut donc faire exécuter du code par l'API ;
-- **les runs MLflow** : fichiers locaux sur le poste qui lance l'entraînement, sans authentification ;
-- **la configuration** : fichier `.env`, exclu de git par `.gitignore`. `.env.example` ne contient aucune valeur. L'application n'utilise encore aucun secret (ni mot de passe de base, ni clé d'API).
-
-Aucune sauvegarde n'existe. Les commandes ne contiennent aucune donnée personnelle : le RGPD ne s'applique pas aujourd'hui.
-
-Les risques vont augmenter dès que l'application stockera des données durablement, utilisera des secrets ou sera joignable depuis le réseau. Les règles d'accès doivent être fixées avant ces évolutions, pas après.
-
-### Options considérées
-
-Pour les droits d'accès à la base :
-
-| Option | Avantage | Inconvénient |
-|---|---|---|
-| A. Un seul compte administrateur partagé, ou aucune authentification (comportement par défaut de l'image MongoDB) | Simple | Une fuite du mot de passe donne tous les droits : suppression des tables, création de comptes |
-| B. Des comptes séparés, chacun avec le minimum de droits | Chaque service n'a que les droits utiles : une fuite a un impact limité | Comptes et droits à créer par un script d'initialisation |
-| C. Accès par identité cloud (IAM) avec un service managé | Pas de mot de passe statique | Nécessite le cloud, écarté par l'ADR-0004 |
-
-### Décision
-
-**Les droits d'accès à la base dépendent de l'environnement :**
-
-| Environnement | Droits d'accès | Pourquoi |
-|---|---|---|
-| Dev | **Option A** : MongoDB de dev sans authentification | Données synthétiques et jetables, base accessible uniquement depuis le poste. Aucun script de droits à maintenir pour démarrer |
-| Test | **Option B** : comptes séparés, comme en prod (`docker/mongo/init-users.js`) | Les erreurs de droits (l'API qui tente de créer une table, l'entraînement qui tente d'écrire) doivent être détectées avant la prod |
-| Prod | **Option B** : comptes séparés, chacun avec le minimum de droits | Une fuite de mot de passe n'a qu'un impact limité |
-
-En dev, les commandes sont en mémoire par défaut (ADR-0001) : l'option A ne concerne que le MongoDB du profil `etl` de `docker-compose.dev.yml`, lancé pour tester le cycle complet.
-
-**En dev, l'option A est encadrée** :
-
-- la base n'écoute que sur `127.0.0.1` ;
-- elle ne contient que des données synthétiques, jamais une copie des données de prod ;
-- son mot de passe est propre au dev et n'est jamais réutilisé en CI ni en prod.
-
-**En test et en prod, l'option B est complétée par l'isolement réseau, la gestion des secrets, la protection des artéfacts et des sauvegardes.**
-
-- **Moindre privilège dans MongoDB** (l'API n'a aucun accès à une base, ADR-0001) :
-
-  | Compte | Droits | Utilisé par |
-  |---|---|---|
-  | administrateur | tous | administration uniquement. En prod, le compte que l'alternant transmet à l'équipe |
-  | `training_reader` | lecture seule (`read`) sur `livraison_express` | la commande `train` (l'entraînement ne fait que lire) |
-  | `etl_writer` | lecture et écriture (`readWrite`) sur `livraison_express` | l'ETL simulé, en test uniquement. En prod, c'est l'ERP qui écrit |
-
-- **Isolement réseau** :
-  - MongoDB et MLflow ne sont pas joignables depuis l'extérieur. Leurs ports ne sont publiés que sur `127.0.0.1`, et les commandes lancées depuis un poste passent par un tunnel SSH ;
-  - pare-feu du VPS : seuls SSH (22), HTTP (80) et HTTPS (443) sont ouverts ;
-  - connexion SSH par clé uniquement, sans mot de passe.
-- **MLflow** : interface et API réservées à l'équipe, par tunnel SSH. Si une exposition devient nécessaire : authentification intégrée de MLflow (`mlflow server --app-name basic-auth`) derrière HTTPS.
-- **Artéfacts du modèle** :
-  - l'API ne charge un modèle que depuis le registre MLflow (ADR-0002) ou un dossier en lecture seule pour elle ;
-  - le format `skops`, déjà utilisé par `MLTrainer` pour MLflow (`skops_trusted_types`), est préféré au pickle, car il n'exécute pas de code arbitraire au chargement.
-- **Secrets** :
-  - `.env` jamais versionné (déjà exclu par `.gitignore`) ni copié dans les images (`.dockerignore` à créer, ADR-0003) ;
-  - sur le VPS, fichier lisible par son seul propriétaire (`chmod 600`) ;
-  - mots de passe différents par environnement, changés en cas de fuite.
-- **Chiffrement en transit** : HTTPS pour l'API (ADR-0008). Les échanges avec MongoDB et MLflow restent sur le réseau Docker interne de la machine, ou passent par le tunnel SSH.
-- **Sauvegardes** : celles du MongoDB des analystes, à vérifier (sinon un `mongodump` quotidien), l'export de la base d'Airflow (`pg_dump`) et l'archive du volume `app_data` (modèle et runs MLflow), stockés hors du VPS, avec un test de restauration régulier.
-- **Génération de données synthétiques** : interdite quand `APP_ENV=prod`, ou soumise à une confirmation explicite.
-
-### Conséquences
-
-- **Trois configurations à maintenir** : en dev, MongoDB sans authentification ; en test, `docker/mongo/init-users.js` crée les comptes séparés ; en prod, l'équipe les crée avec le compte administrateur. Le code ne fait pas la différence : il reçoit simplement une URL de connexion différente (`TRAINING_SOURCE_URL`).
-- **Les erreurs de droits n'apparaissent pas en dev** : sans authentification, tout est permis. C'est l'environnement de test, configuré comme la prod, qui les détecte.
-- **À implémenter**, au moment de la mise en place de la base et de MLflow :
-  - les comptes MongoDB de prod, créés par l'équipe une fois le compte administrateur obtenu (en test, `init-users.js` le fait déjà) ;
-  - les ports liés à `127.0.0.1` dans le compose ;
-  - le chargement du modèle en `skops` dans `MlflowModelRepository` ;
-  - le garde-fou de la génération de données ;
-  - le script de sauvegarde.
-- **Si des données réelles sont utilisées un jour** : application du RGPD (minimisation des données, durée de conservation, registre des traitements).
-
-### Points restant ouverts
-
-- **Emplacement des sauvegardes** hors du VPS.
-- **Chiffrement du disque** du VPS.
-- **Fréquence de renouvellement** des mots de passe.
-
----
-
-## ADR-0010 — Quelle base de l'ERP utiliser comme source des données d'entraînement
+## ADR-0009 — Quelle base de l'ERP utiliser comme source des données d'entraînement
 
 **Status :** Accepté
 **Date :** 29/10/2026
@@ -683,7 +686,7 @@ Ce que la source doit permettre :
 - **lire les commandes** sans gêner l'ERP ni l'autre application critique ;
 - **fournir des données cohérentes avec le schéma actuel**, celui des commandes que l'API reçoit ;
 - **filtrer par période**, pour entraîner et évaluer sur des fenêtres de dates ;
-- **avoir un responsable** capable de créer un compte en lecture seule (ADR-0009) et de corriger un incident.
+- **avoir un responsable** capable de créer un compte en lecture seule (ADR-0007) et de corriger un incident.
 
 ### Options considérées
 
@@ -712,7 +715,7 @@ Ce MongoDB est celui des analystes : ce n'est pas une base de l'ERP, il en reço
 1. l'ETL de l'ERP ajoute les nouvelles commandes labellisées dans MongoDB ;
 2. `train` lit toutes les commandes labellisées et entraîne un nouveau modèle ;
 3. le nouveau modèle et le modèle en service (`champion`) sont évalués **sur le même jeu de test** : les commandes les plus récentes, qui n'ont servi à entraîner aucun des deux ;
-4. si le nouveau modèle a un meilleur score, il remplace le modèle en service (ADR-0011). Sinon, le modèle en service est conservé, et le prochain entraînement se fera avec les nouvelles données de l'ETL.
+4. si le nouveau modèle a un meilleur score, il remplace le modèle en service (ADR-0010). Sinon, le modèle en service est conservé, et le prochain entraînement se fera avec les nouvelles données de l'ETL.
 
 Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : les nouvelles données peuvent simplement être plus faciles ou plus difficiles à prédire. D'où l'étape 3.
 
@@ -737,8 +740,8 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 - **Choix par configuration** : la variable `TRAINING_SOURCE_URL` (`memory://` ou `mongodb://hôte:27017/livraison_express`) choisit l'implémentation dans la racine de composition `core/core.py` (`build_order_repository`). En dev, la source reste en mémoire.
 - **Validation à la lecture** : MongoDB n'impose aucun schéma. Chaque document est converti en `OrderEntity` : un champ absent, `null` ou de mauvais type écarte le document, compté dans les logs, jamais utilisé en silence. Les documents sans label (`express_eligible`) ne servent pas à l'entraînement.
 - **Conversion des dates** : `order_date` est lu en `datetime` et ramené à une date pour choisir les commandes les plus récentes du jeu de test.
-- **Comparaison et promotion** (implémentées, voir ADR-0011) : `train` évalue le modèle en service sur le jeu de test du nouveau modèle, et ne remplace le modèle que si le nouveau est meilleur (`PromotionPolicy`). Pour les commandes de l'ERP, le jeu de test est fait des 20 % de commandes arrivées en dernier (`ChronologicalTrainTestSplitter`) : elles sont toujours plus récentes que celles qui ont entraîné le modèle en service.
-- **Sécurité, dans la continuité de l'ADR-0009** :
+- **Comparaison et promotion** (implémentées, voir ADR-0010) : `train` évalue le modèle en service sur le jeu de test du nouveau modèle, et ne remplace le modèle que si le nouveau est meilleur (`PromotionPolicy`). Pour les commandes de l'ERP, le jeu de test est fait des 20 % de commandes arrivées en dernier (`ChronologicalTrainTestSplitter`) : elles sont toujours plus récentes que celles qui ont entraîné le modèle en service.
+- **Sécurité, dans la continuité de l'ADR-0007** :
   - un compte MongoDB en lecture seule sur `livraison_express.orders` pour l'entraînement (rôle `read`), créé par l'équipe avec le compte administrateur transmis par l'alternant ;
   - l'authentification MongoDB activée en CI et en prod ;
   - le port MongoDB lié à `127.0.0.1`, et l'accès depuis un poste par tunnel SSH.
@@ -754,25 +757,25 @@ Comparer deux scores mesurés sur des jeux de test différents ne prouve rien : 
 - **Taille du jeu de test** de la comparaison (20 % des commandes aujourd'hui, ou un nombre de semaines) et **écart minimal** pour qu'un score soit jugé meilleur (`PROMOTION_MIN_GAIN`, 0 aujourd'hui).
 - **Récupérer l'historique 2015-2022** si les métriques montrent qu'il manque des données : un export ponctuel en lecture seule depuis PostgreSQL, en heures creuses, vers MongoDB. Il faut pour cela retrouver quelqu'un qui a les droits sur PostgreSQL.
 - **Transfert du compte administrateur** de MongoDB à l'équipe : date et modalités, avant la fin du contrat de l'alternant.
-- **Sauvegardes de MongoDB** : existent-elles aujourd'hui ? Sinon, un `mongodump` quotidien (ADR-0009).
+- **Sauvegardes de MongoDB** : existent-elles aujourd'hui ? Sinon, un `mongodump` quotidien (ADR-0007).
 
 ---
 
-## ADR-0011 — Comment orchestrer le réentraînement du modèle
+## ADR-0010 — Comment orchestrer le réentraînement du modèle
 
 **Status :** Accepté
 **Date :** 29/10/2026
 
 ### Contexte
 
-L'ETL de l'ERP ajoute en continu des commandes labellisées dans MongoDB (ADR-0010). Le modèle doit être réentraîné quand assez de nouvelles commandes sont arrivées, avec l'image de prod, puis remplacer le modèle en service seulement s'il est meilleur sur le même jeu de test.
+L'ETL de l'ERP ajoute en continu des commandes labellisées dans MongoDB (ADR-0009). Le modèle doit être réentraîné quand assez de nouvelles commandes sont arrivées, avec l'image de prod, puis remplacer le modèle en service seulement s'il est meilleur sur le même jeu de test.
 
 Aujourd'hui, `train` se lance à la main (`docker compose run --rm train`). Il ne se compare à rien et écrase le modèle en service. L'API ne charge le modèle qu'au démarrage : un nouveau modèle n'est servi qu'après un redémarrage.
 
 Contraintes :
 
 - **une seule machine**, sans orchestrateur de conteneurs (ADR-0003) ;
-- l'entraînement doit tourner **dans l'image de l'application**, pas dans l'orchestrateur : mêmes dépendances, même code qu'en prod (ADR-0007) ;
+- l'entraînement doit tourner **dans l'image de l'application**, pas dans l'orchestrateur : mêmes dépendances, même code qu'en prod (ADR-0008) ;
 - les échecs doivent être visibles et relancés, et chaque exécution doit laisser une trace.
 
 ### Options considérées
@@ -811,7 +814,7 @@ Raisons :
 - **Accès à Docker par un proxy** : le socket Docker donne les droits de root sur la machine. Airflow n'y accède qu'à travers `docker-proxy` (`tecnativa/docker-socket-proxy`), qui n'autorise que les conteneurs, les images, le démarrage et le redémarrage. Le proxy n'a pas de port publié.
 - **Le conteneur d'entraînement est moins durci** que dans les composes : `DockerOperator` ne permet pas `read_only` ni `cap_drop`. Il tourne quand même avec l'UID 1000, sans droits root.
 - **Secrets** : l'URL du MongoDB de l'ERP passe par `private_environment`, jamais affichée dans les logs ni l'interface. Les secrets d'Airflow (base, clé Fernet, JWT) sont dans `.env.prod`, jamais versionné.
-- **Interface réservée à l'équipe** : port publié sur `127.0.0.1` uniquement, accès par tunnel SSH (ADR-0009), compte admin du gestionnaire FAB.
+- **Interface réservée à l'équipe** : port publié sur `127.0.0.1` uniquement, accès par tunnel SSH (ADR-0007), compte admin du gestionnaire FAB.
 - **Le DAG est actif dès son chargement** (`DAGS_ARE_PAUSED_AT_CREATION=false`). Au premier démarrage, Airflow lance aussitôt le run de la dernière nuit passée.
 - **Comportement de `train` en dev** : il se compare aussi au modèle existant. Avec les mêmes données synthétiques, le nouveau modèle est identique, donc pas meilleur : le modèle existant est conservé.
 - **Coût** : six conteneurs de plus sur la machine de prod (Airflow, sa base et le proxy Docker), qui doit avoir la mémoire nécessaire.

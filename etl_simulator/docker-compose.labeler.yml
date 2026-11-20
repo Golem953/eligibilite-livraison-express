@@ -1,4 +1,4 @@
-# Labellisation simulée (ADR-0010) : joue le « résultat réel des livraisons ».
+# Labellisation simulée (ADR-0009) : joue le « résultat réel des livraisons ».
 #
 # L'ERP simulé (dossier erp_prod_test, à côté du projet) écrit ses commandes dans le
 # MongoDB des analystes, sans label. Ce service y ajoute `express_eligible` aux

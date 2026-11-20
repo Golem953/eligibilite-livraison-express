@@ -85,7 +85,7 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Lancé à la demande, puis s'arrête (ADR-0007) : docker compose -f docker-compose.dev.yml run --rm train
+  # Lancé à la demande, puis s'arrête (ADR-0008) : docker compose -f docker-compose.dev.yml run --rm train
   train:
     <<: *app
     command: ["python", "-m", "app", "train"]
@@ -121,7 +121,7 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  # --- Dev uniquement : un MongoDB et un ETL simulés à la place de ceux de la prod (ADR-0010) ---
+  # --- Dev uniquement : un MongoDB et un ETL simulés à la place de ceux de la prod (ADR-0009) ---
   #   docker compose -f docker-compose.dev.yml --env-file .env.dev --profile etl up -d --build
   #   TRAINING_SOURCE_URL=mongodb://mongodb:27017/livraison_express dans .env.dev, puis train.
   # En prod, ces deux services n'existent pas : l'entraînement lit le MongoDB des analystes.

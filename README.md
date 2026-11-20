@@ -8,9 +8,9 @@ Ce qui est en place :
 
 | Brique | Mise en œuvre | Décision |
 |---|---|---|
-| Données d'entraînement | MongoDB des analystes, alimenté par l'ERP, lu en lecture seule. En dev : données synthétiques en mémoire ou MongoDB simulé | [ADR-0001](ADR.md), [ADR-0006](ADR.md), [ADR-0010](ADR.md) |
-| Entraînement | `python -m app train` : le nouveau modèle (challenger) remplace le modèle en service (champion) seulement s'il fait mieux sur les mêmes commandes récentes. Runs suivis dans MLflow | [ADR-0002](ADR.md), [ADR-0007](ADR.md) |
-| Orchestration | Airflow : réentraînement chaque nuit, s'il est arrivé assez de nouvelles commandes labellisées | [ADR-0011](ADR.md) |
+| Données d'entraînement | MongoDB des analystes, alimenté par l'ERP, lu en lecture seule. En dev : données synthétiques en mémoire ou MongoDB simulé | [ADR-0001](ADR.md), [ADR-0006](ADR.md), [ADR-0009](ADR.md) |
+| Entraînement | `python -m app train` : le nouveau modèle (challenger) remplace le modèle en service (champion) seulement s'il fait mieux sur les mêmes commandes récentes. Runs suivis dans MLflow | [ADR-0002](ADR.md), [ADR-0008](ADR.md) |
+| Orchestration | Airflow : réentraînement chaque nuit, s'il est arrivé assez de nouvelles commandes labellisées | [ADR-0010](ADR.md) |
 | Service | API FastAPI, canary du modèle à 90/10 (`CANARY_PERCENT`) | [ADR-0005](ADR.md) |
 | Déploiement | Docker Compose, un fichier par environnement (dev, test, prod), image de prod minimale | [ADR-0003](ADR.md), [ADR-0004](ADR.md) |
 | CI/CD | GitHub Actions : Ruff, pytest (avec un vrai MongoDB), chargement du DAG Airflow, publication de l'image sur GitHub Container Registry | [CONTRIBUTING.md](CONTRIBUTING.md#cicd) |

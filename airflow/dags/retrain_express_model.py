@@ -1,4 +1,4 @@
-"""Réentraînement nocturne du modèle d'éligibilité express (ADR-0011).
+"""Réentraînement nocturne du modèle d'éligibilité express (ADR-0010).
 
 Chaque nuit :
 
@@ -8,7 +8,7 @@ Chaque nuit :
 2. ``train`` lance l'image de prod de l'application (``python -m app train``) dans un
    conteneur, sur le volume du modèle de la prod. L'application compare elle-même le
    nouveau modèle au modèle en service, sur le même jeu de test, et ne remplace ce
-   dernier que si le nouveau est meilleur (ADR-0010) ;
+   dernier que si le nouveau est meilleur (ADR-0009) ;
 3. ``read_result`` lit le résultat, écrit en JSON sur la dernière ligne de ``train`` ;
 4. ``remember_order_count`` retient le nombre de commandes utilisées, pour le seuil de
    la nuit suivante, que le modèle ait été promu ou non ;
